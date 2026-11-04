@@ -1,9 +1,6 @@
 name: Repair native Linux release
 
 on:
-  push:
-    branches: [main]
-    paths: ['.github/workflows/repair-linux.yml']
   workflow_dispatch:
     inputs:
       tag:
