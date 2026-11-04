@@ -41,3 +41,11 @@ All 26 current tests pass and Clippy is clean. A regression test runs a silent i
 Verified actual public skin-image retrieval and head rendering using an isolated, credential-free UI fixture. The Play page displays the real head, game-folder shortcut and skin button. The desktop's file-selection portal is available inside the installed Flatpak. No live skin upload was performed during testing; it requires the user to choose a PNG and apply it. Authentication tokens are absent from UI fixtures and events.
 
 The 0.2.0 release and Flatpak bundle were rebuilt and installed, and the installed command reports the new version. Game/profile workers remain independent so loading a head or choosing a skin does not block an ongoing install. Unknown-progress phases use an activity bar and elapsed time; percentages are based on transferred bytes, rather than guessed progress.
+
+## Version 0.2.1: preparation animation
+
+Inspected the user's running Flatpak during resource preparation: its file count advanced to 3,446 of 5,147, and a three-second process I/O sample recorded 849,998 bytes written. The preparation worker was active; the animation's 250 ms repaint timer caused its visible stepping.
+
+The indeterminate bar now requests a frame every 16.7 ms while visible, independently of resource-download log messages. Minimized windows do not request animation frames. Measured download progress still repaints on worker events, with a one-second timer for its elapsed clock. Idle and game-running screens retain their event-driven rendering. All 26 tests pass, and formatting, Clippy and the Flatpak source-lock check pass.
+
+Rebuilt and installed the 0.2.1 Flatpak, validated its metadata and runtime dependencies, and confirmed its installed command reports 0.2.1. The existing launcher and its preparation subprocess remained running across installation; the animation fix takes effect on the next launcher start.

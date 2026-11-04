@@ -456,6 +456,13 @@ impl Launcher {
                             4.,
                             ACCENT,
                         );
+                        // Animate independently of the worker's much slower progress reports.
+                        // Use a short animation timer only while the bar is visible.
+                        if ui.is_rect_visible(rect)
+                            && !ctx.input(|i| i.viewport().minimized.unwrap_or(false))
+                        {
+                            ctx.request_repaint_after(Duration::from_secs_f64(1. / 60.));
+                        }
                     }
                     let elapsed =
                         format_duration(self.job_started.map(|t| t.elapsed()).unwrap_or_default());
@@ -478,7 +485,9 @@ impl Launcher {
                         )
                         .truncate(),
                     );
-                    ctx.request_repaint_after(Duration::from_millis(250));
+                    // Measured progress repaints on worker events; only the elapsed clock
+                    // needs a timer when there is no animation to draw.
+                    ctx.request_repaint_after(Duration::from_secs(1));
                 }
             });
     }

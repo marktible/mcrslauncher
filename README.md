@@ -83,7 +83,7 @@ cargo test --locked --test upstream -- --ignored --nocapture
 
 `src/github.rs` owns release discovery and verified engine extraction. `src/engine.rs` is the typed subprocess bridge. `src/worker.rs` serializes game operations away from the UI thread. `src/progress.rs` observes the installer's archive file instead of relying on terminal-only progress output. `src/profiles.rs` caches public skins and handles the file chooser and skin upload independently of downloads. `src/ui.rs` implements the desktop interface. Logs are capped at 500 displayed lines and 128 KiB of captured output per process stream.
 
-The game and profile workers sleep when idle. The UI redraws on input, worker events and scheduled checks, with a low-frequency activity animation only while a job is running. Performance depends on the system and mods; no game FPS improvement is claimed by the launcher.
+The game and profile workers sleep when idle. The UI redraws on input, worker events and scheduled checks. Preparation's activity bar uses a smooth animation while visible; measured downloads update on worker events, and idle screens have no animation loop. Performance depends on the system and mods; no game FPS improvement is claimed by the launcher.
 
 Horizon remains responsible for sign-in and refresh credentials. For a requested skin upload, the profile worker consumes Horizon's private read-once session handoff, removes that file immediately, and sends its temporary Minecraft access token only to Minecraft's skin service. The skin handler does not persist tokens or send them to UI events, activity logs, or skin-image hosts.
 
