@@ -56,6 +56,7 @@ pub struct Launcher {
     receipt: Receipt,
     catalog: Option<Catalog>,
     catalog_channel: Channel,
+    update_unavailable: Option<String>,
     page: Page,
     busy: bool,
     stage: String,
@@ -97,6 +98,7 @@ impl Launcher {
             skin_editor: None,
             paths,
             catalog_channel: settings.channel,
+            update_unavailable: None,
             settings,
             snapshot: Snapshot::default(),
             receipt: Receipt::default(),
@@ -188,11 +190,13 @@ impl Launcher {
                     self.snapshot = snapshot;
                 }
                 Event::Catalog(catalog) => {
+                    self.update_unavailable = None;
                     self.catalog = Some(*catalog);
                     self.catalog_channel = self.settings.channel;
                     self.checked_at = Some(SystemTime::now());
                     self.last_check = Instant::now();
                 }
+                Event::UpdateUnavailable(message) => self.update_unavailable = Some(message),
                 Event::Receipt(receipt) => self.receipt = receipt,
                 Event::Done(result) => {
                     self.busy = false;
@@ -562,7 +566,7 @@ impl Launcher {
                     ui.add_space(7.);
                     ui.label(
                         RichText::new(if self.settings.update_before_play {
-                            "Checks for the latest game build before launch"
+                            "Checks for updates; uses the prepared installed build if unavailable"
                         } else {
                             "Using your locally installed game build"
                         })
@@ -831,10 +835,14 @@ impl Launcher {
             ui.add_space(18.);
             ui.separator();
             ui.add_space(14.);
+            if let Some(message) = &self.update_unavailable {
+                ui.label(RichText::new(message).color(ACCENT));
+                ui.add_space(10.);
+            }
             if let Some(catalog) = self.catalog.clone().filter(|_| self.catalog_channel == self.settings.channel) {
                 ui.horizontal(|ui| {
-                    dot(ui, if self.has_update() { ACCENT } else { GREEN });
-                    ui.label(RichText::new(if self.has_update() { "Update available" } else { "You're up to date" }).size(16.).strong());
+                    dot(ui, if self.update_unavailable.is_some() || self.has_update() { ACCENT } else { GREEN });
+                    ui.label(RichText::new(if self.update_unavailable.is_some() { "Last known builds · update status unavailable" } else if self.has_update() { "Update available" } else { "You're up to date" }).size(16.).strong());
                 });
                 ui.add_space(10.);
                 ui.label(format!("Game: {}", catalog.game.name));
@@ -843,6 +851,9 @@ impl Launcher {
                 ui.add_space(14.);
                 if primary(ui, if self.has_update() { "Install latest build  >" } else { "Verify & install  >" }, !self.busy).clicked() { self.start(Action::InstallGame); }
             } else {
+                if let Some(version) = &self.snapshot.selected_version {
+                    ui.label(format!("Installed: {version}"));
+                }
                 ui.label(RichText::new("Check for the latest build to see what's new.").color(MUTED));
             }
         });

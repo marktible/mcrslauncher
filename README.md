@@ -25,6 +25,8 @@ The first resource preparation or native mod build can take several minutes and 
 
 Preparation retries temporary DNS, connection and server-availability failures up to three attempts, reusing completed downloads. Cancel also stops retry waits. If connectivity stays unavailable, restore the connection and press Play again to resume.
 
+GitHub update checks also retry temporary network failures. If a check stays unavailable, the Updates page shows that status and retains any last-known release details without claiming they are current. Play can continue with a verified, prepared installed build when there are no pending mod changes; Horizon still checks the Minecraft account. Explicit installation requests require a successful update check.
+
 Use `--page mods`, `--page updates`, or `--page settings` to open a page directly. Ctrl+1 through Ctrl+4 switch pages inside the app.
 
 ## Features

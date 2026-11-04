@@ -55,6 +55,7 @@ pub enum Event {
     Output(Output),
     Snapshot(Snapshot),
     Catalog(Box<Catalog>),
+    UpdateUnavailable(String),
     Receipt(Receipt),
     Done(std::result::Result<String, String>),
 }
@@ -140,26 +141,68 @@ fn execute(
     send: &(dyn Fn(Event) + Sync),
     report: crate::engine::Reporter<'_>,
 ) -> Result<String> {
+    execute_with_catalog(engine, action, settings, send, report, &|| {
+        engine.catalog_reported(settings, report)
+    })
+}
+
+fn execute_with_catalog(
+    engine: &Engine,
+    action: &Action,
+    settings: &Settings,
+    send: &(dyn Fn(Event) + Sync),
+    report: crate::engine::Reporter<'_>,
+    catalog: &dyn Fn() -> Result<Catalog>,
+) -> Result<String> {
     match action {
         Action::Refresh => {
             send(Event::Snapshot(engine.snapshot()?));
             return Ok("Library refreshed".into());
         }
-        Action::CheckUpdates => {
-            send(Event::Catalog(Box::new(engine.catalog(settings)?)));
-            return Ok("Update check complete".into());
-        }
+        Action::CheckUpdates => match catalog() {
+            Ok(catalog) => {
+                send(Event::Catalog(Box::new(catalog)));
+                return Ok("Update check complete".into());
+            }
+            Err(error) => {
+                crate::network::check_cancel(&engine.cancel)?;
+                report(Output::Log(format!("Update check unavailable: {error:#}")));
+                send(Event::UpdateUnavailable(
+                    "Updates are unavailable. Try Check now again when GitHub is reachable.".into(),
+                ));
+                return Ok("Update check unavailable · installed builds are kept".into());
+            }
+        },
         Action::Setup | Action::SignIn | Action::InstallGame | Action::Play => {
             if !matches!(action, Action::Play)
                 || settings.update_before_play
                 || !engine.paths.engine().exists()
             {
                 report(Output::Stage("Checking the latest Horizon builds".into()));
-                let catalog = engine.catalog(settings)?;
-                send(Event::Catalog(Box::new(catalog.clone())));
-                engine.ensure_engine(&catalog, report)?;
-                if matches!(action, Action::InstallGame | Action::Play) {
-                    engine.install_game(&catalog, settings, true, report)?;
+                match catalog() {
+                    Ok(catalog) => {
+                        send(Event::Catalog(Box::new(catalog.clone())));
+                        engine.ensure_engine(&catalog, report)?;
+                        if matches!(action, Action::InstallGame | Action::Play) {
+                            engine.install_game(&catalog, settings, true, report)?;
+                        }
+                    }
+                    Err(error) => {
+                        crate::network::check_cancel(&engine.cancel)?;
+                        if matches!(action, Action::Play) && engine.can_play_installed()? {
+                            report(Output::Log(format!(
+                                "Update check unavailable; using the prepared installed build: {error:#}"
+                            )));
+                            send(Event::UpdateUnavailable(
+                                "Could not check for updates. Play is using your prepared installed build."
+                                    .into(),
+                            ));
+                        } else {
+                            return Err(error.context(
+                                "Could not check GitHub for updates. An installed, prepared build is needed to play while updates are unavailable.",
+                            ));
+                        }
+                    }
                 }
             }
             engine.verify_local_engine()?;
@@ -257,4 +300,187 @@ fn execute(
         _ => "Done",
     }
     .into())
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use crate::{github, model};
+    use std::{fs, os::unix::fs::PermissionsExt, sync::Mutex};
+
+    fn installed(owner: bool, prepared: bool, dirty: bool) -> (tempfile::TempDir, Engine) {
+        let temporary = tempfile::tempdir().unwrap();
+        let paths = Paths {
+            root: temporary.path().to_path_buf(),
+        };
+        paths.create().unwrap();
+        let script = format!(
+            r#"#!/bin/sh
+if [ "$1" = --json ]; then
+    case "$2" in
+        account) printf '%s\n' '{{"accounts":[],"owner":{owner},"sign_in_configured":true}}';;
+        versions) printf '%s\n' '{{"installed":["native-test"],"selected":"native-test"}}';;
+        instance) printf '[]\n';;
+    esac
+    exit 0
+fi
+printf '%s\n' "$1" >> "$HORIZON_LAUNCHER_HOME/commands"
+test "$1" = play
+"#
+        );
+        fs::write(paths.engine(), &script).unwrap();
+        fs::set_permissions(paths.engine(), fs::Permissions::from_mode(0o755)).unwrap();
+        let receipt = Receipt {
+            executable_sha256: github::digest_hex(script.as_bytes()),
+            mods_dirty: dirty,
+            ..Receipt::default()
+        };
+        model::atomic_write(&paths.receipt(), &serde_json::to_vec(&receipt).unwrap()).unwrap();
+        if prepared {
+            let version = paths.engine_home().join("versions/native-test");
+            let resources = version.join(".local/horizon-client/26.3");
+            fs::create_dir_all(resources.join("assets/minecraft")).unwrap();
+            fs::write(
+                version.join("research-lock.json"),
+                r#"{"minecraft":{"version":"26.3"}}"#,
+            )
+            .unwrap();
+            fs::write(resources.join("horizon-resources.json"), "{}").unwrap();
+            fs::write(resources.join("assets/minecraft/sounds.json"), "{}").unwrap();
+        }
+        let engine = Engine::new(paths, Arc::new(AtomicBool::new(false))).unwrap();
+        (temporary, engine)
+    }
+
+    fn unavailable() -> Result<Catalog> {
+        anyhow::bail!("GitHub: Temporary failure in name resolution")
+    }
+
+    #[test]
+    fn failed_update_check_still_plays_a_verified_prepared_build_with_account_checks() {
+        let (_temporary, engine) = installed(true, true, false);
+        let events = Mutex::new(Vec::new());
+        let outputs = Mutex::new(Vec::new());
+        execute_with_catalog(
+            &engine,
+            &Action::Play,
+            &Settings::default(),
+            &|event| events.lock().unwrap().push(event),
+            &|output| outputs.lock().unwrap().push(output),
+            &unavailable,
+        )
+        .unwrap();
+        assert_eq!(
+            fs::read_to_string(engine.paths.engine_home().join("commands")).unwrap(),
+            "play\n"
+        );
+        assert!(
+            events
+                .into_inner()
+                .unwrap()
+                .iter()
+                .any(|event| matches!(event, Event::UpdateUnavailable(_)))
+        );
+        assert!(
+            outputs
+                .into_inner()
+                .unwrap()
+                .iter()
+                .any(|output| matches!(output, Output::Playing))
+        );
+    }
+
+    #[test]
+    fn unavailable_updates_do_not_bypass_ownership_preparation_or_pending_mod_builds() {
+        for (owner, prepared, dirty) in [
+            (false, true, false),
+            (true, false, false),
+            (true, true, true),
+        ] {
+            let (_temporary, engine) = installed(owner, prepared, dirty);
+            assert!(
+                execute_with_catalog(
+                    &engine,
+                    &Action::Play,
+                    &Settings::default(),
+                    &|_| {},
+                    &|_| {},
+                    &unavailable,
+                )
+                .is_err()
+            );
+            assert!(!engine.paths.engine_home().join("commands").exists());
+        }
+    }
+
+    #[test]
+    fn unavailable_updates_do_not_bypass_engine_integrity_or_cancellation() {
+        for cancelled in [false, true] {
+            let (_temporary, engine) = installed(true, true, false);
+            if cancelled {
+                engine.cancel.store(true, Ordering::Relaxed);
+            } else {
+                fs::write(engine.paths.engine(), "corrupted engine").unwrap();
+            }
+            let error = execute_with_catalog(
+                &engine,
+                &Action::Play,
+                &Settings::default(),
+                &|_| {},
+                &|_| {},
+                &unavailable,
+            )
+            .unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains(if cancelled { "cancelled" } else { "changed" })
+            );
+            assert!(!engine.paths.engine_home().join("commands").exists());
+        }
+    }
+
+    #[test]
+    fn manual_update_failure_is_nonfatal_and_does_not_publish_a_fresh_catalog() {
+        let (_temporary, engine) = installed(true, true, false);
+        let events = Mutex::new(Vec::new());
+        execute_with_catalog(
+            &engine,
+            &Action::CheckUpdates,
+            &Settings::default(),
+            &|event| events.lock().unwrap().push(event),
+            &|_| {},
+            &unavailable,
+        )
+        .unwrap();
+        let events = events.into_inner().unwrap();
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, Event::UpdateUnavailable(_)))
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, Event::Catalog(_)))
+        );
+        assert!(!engine.paths.engine_home().join("commands").exists());
+    }
+
+    #[test]
+    fn explicit_install_does_not_claim_success_when_updates_are_unavailable() {
+        let (_temporary, engine) = installed(true, true, false);
+        assert!(
+            execute_with_catalog(
+                &engine,
+                &Action::InstallGame,
+                &Settings::default(),
+                &|_| {},
+                &|_| {},
+                &unavailable,
+            )
+            .is_err()
+        );
+        assert!(!engine.paths.engine_home().join("commands").exists());
+    }
 }

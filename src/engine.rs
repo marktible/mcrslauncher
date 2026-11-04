@@ -3,6 +3,7 @@
 use crate::{
     github::{self, Catalog},
     model::{self, Account, Mod, Paths, Receipt, Settings, Snapshot},
+    network,
     progress::{FileProgress, FileTransfer, TransferMeter, TransferProgress},
 };
 use anyhow::{Context, Result, bail, ensure};
@@ -98,7 +99,21 @@ impl Engine {
     }
 
     pub fn catalog(&self, settings: &Settings) -> Result<Catalog> {
-        github::fetch_catalog(&self.client, settings.channel)
+        self.catalog_reported(settings, &|_| {})
+    }
+
+    pub fn catalog_reported(&self, settings: &Settings, report: Reporter<'_>) -> Result<Catalog> {
+        github::fetch_catalog_cancellable(
+            &self.client,
+            settings.channel,
+            &self.cancel,
+            |attempt, delay| {
+                report(Output::Stage(format!(
+                    "GitHub connection interrupted · retry {attempt} of 3 in {}s",
+                    delay.as_secs()
+                )));
+            },
+        )
     }
 
     pub fn ensure_engine(&self, catalog: &Catalog, report: Reporter<'_>) -> Result<()> {
@@ -416,7 +431,27 @@ impl Engine {
         self.prepare_version(&version, report)
     }
 
+    pub fn can_play_installed(&self) -> Result<bool> {
+        let snapshot = self.snapshot()?;
+        Ok(snapshot.owner
+            && !self.receipt().mods_dirty
+            && snapshot.selected_version.as_ref().is_some_and(|version| {
+                snapshot.installed.contains(version) && self.resources_ready(version)
+            }))
+    }
+
     fn prepare_version(&self, version: &str, report: Reporter<'_>) -> Result<()> {
+        if self.resources_ready(version) {
+            return Ok(());
+        }
+        self.prepare_download(
+            version,
+            report,
+            &[Duration::from_secs(2), Duration::from_secs(5)],
+        )
+    }
+
+    fn resources_ready(&self, version: &str) -> bool {
         let directory = self.paths.engine_home().join("versions").join(version);
         if let Ok(bytes) = fs::read(directory.join("research-lock.json"))
             && let Ok(lock) = serde_json::from_slice::<Value>(&bytes)
@@ -426,14 +461,10 @@ impl Engine {
             if resources.join("horizon-resources.json").is_file()
                 && resources.join("assets/minecraft/sounds.json").is_file()
             {
-                return Ok(());
+                return true;
             }
         }
-        self.prepare_download(
-            version,
-            report,
-            &[Duration::from_secs(2), Duration::from_secs(5)],
-        )
+        false
     }
 
     fn prepare_download(
@@ -462,7 +493,7 @@ impl Engine {
                 Err(error) => error,
             };
             self.check_cancel()?;
-            if !is_temporary_network_error(&error) {
+            if !network::is_temporary(&error) {
                 return Err(error);
             }
             let Some(delay) = retry_delays.get(attempt) else {
@@ -492,35 +523,6 @@ impl Engine {
         }
         unreachable!("preparation returns after the final attempt")
     }
-}
-
-fn is_temporary_network_error(error: &anyhow::Error) -> bool {
-    let message = format!("{error:#}").to_ascii_lowercase();
-    // The captured tail may contain an earlier, nonfatal sound-download warning. Classify
-    // the CLI's final error rather than letting that warning hide a different fatal cause.
-    let cause = message
-        .rsplit_once("error:")
-        .map_or(message.as_str(), |(_, cause)| cause);
-    // Restrict retries to transport failures. Authentication, checksum, Java compatibility,
-    // certificates and preparer failures need their original error, without another run.
-    [
-        "dns failed:",
-        "temporary failure in name resolution",
-        "failed to lookup address information",
-        "connection reset",
-        "connection aborted",
-        "connection timed out",
-        "operation timed out",
-        "network is unreachable",
-        "http 502",
-        "http 503",
-        "http 504",
-        "status 502",
-        "status 503",
-        "status 504",
-    ]
-    .iter()
-    .any(|marker| cause.contains(marker))
 }
 
 pub fn game_fingerprint(catalog: &Catalog) -> String {

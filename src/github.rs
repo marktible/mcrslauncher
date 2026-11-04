@@ -1,4 +1,4 @@
-use crate::model::Channel;
+use crate::{model::Channel, network};
 use anyhow::{Context, Result, bail, ensure};
 use reqwest::blocking::Client;
 use serde::Deserialize;
@@ -6,6 +6,7 @@ use sha2::{Digest, Sha256};
 use std::{
     io::{Read, Write},
     path::{Path, PathBuf},
+    sync::atomic::AtomicBool,
     time::Duration,
 };
 
@@ -144,27 +145,67 @@ pub fn select_catalog(
 }
 
 pub fn fetch_catalog(client: &Client, channel: Channel) -> Result<Catalog> {
+    fetch_catalog_cancellable(client, channel, &AtomicBool::new(false), |_, _| {})
+}
+
+pub fn fetch_catalog_cancellable(
+    client: &Client,
+    channel: Channel,
+    cancel: &AtomicBool,
+    retrying: impl Fn(usize, Duration),
+) -> Result<Catalog> {
+    fetch_catalog_at(
+        client,
+        channel,
+        API,
+        cancel,
+        &[Duration::from_secs(1), Duration::from_secs(2)],
+        retrying,
+    )
+}
+
+fn fetch_catalog_at(
+    client: &Client,
+    channel: Channel,
+    api: &str,
+    cancel: &AtomicBool,
+    delays: &[Duration],
+    retrying: impl Fn(usize, Duration),
+) -> Result<Catalog> {
+    network::retry(cancel, delays, retrying, || {
+        fetch_catalog_once(client, channel, api, cancel)
+    })
+}
+
+fn fetch_catalog_once(
+    client: &Client,
+    channel: Channel,
+    api: &str,
+    cancel: &AtomicBool,
+) -> Result<Catalog> {
     let mut releases = Vec::new();
     // The rolling Nightly can fall behind many launcher releases in GitHub's release list.
     // Fetch its fixed tag separately; never mistake a launcher release for a game release.
     let response = client
-        .get(format!("{API}/releases?per_page=100"))
-        .timeout(Duration::from_secs(30))
+        .get(format!("{api}/releases?per_page=100"))
+        .timeout(Duration::from_secs(12))
         .send()?
         .error_for_status()
         .context("GitHub update check failed; check your connection or API rate limit")?;
     releases.extend(response.json::<Vec<Release>>()?);
+    network::check_cancel(cancel)?;
     if channel == Channel::Nightly && !releases.iter().any(|r| r.tag_name == "nightly") {
         releases.push(
             client
-                .get(format!("{API}/releases/tags/nightly"))
-                .timeout(Duration::from_secs(30))
+                .get(format!("{api}/releases/tags/nightly"))
+                .timeout(Duration::from_secs(12))
                 .send()?
                 .error_for_status()?
                 .json()?,
         );
     }
     for page in 2..=4 {
+        network::check_cancel(cancel)?;
         if let Ok(catalog) = select_catalog(
             &releases,
             channel,
@@ -174,8 +215,8 @@ pub fn fetch_catalog(client: &Client, channel: Channel) -> Result<Catalog> {
             return Ok(catalog);
         }
         let older: Vec<Release> = client
-            .get(format!("{API}/releases?per_page=100&page={page}"))
-            .timeout(Duration::from_secs(30))
+            .get(format!("{api}/releases?per_page=100&page={page}"))
+            .timeout(Duration::from_secs(12))
             .send()?
             .error_for_status()?
             .json()?;
@@ -485,4 +526,103 @@ pub fn origin_files(home: &Path) -> Vec<PathBuf> {
                 .is_some_and(|n| n.to_string_lossy().ends_with(".origin.json"))
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{
+        net::TcpListener,
+        sync::{Arc, atomic::Ordering},
+        thread,
+    };
+
+    fn server(replies: Vec<(u16, String)>) -> (String, thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = format!("http://{}", listener.local_addr().unwrap());
+        let task = thread::spawn(move || {
+            for (status, body) in replies {
+                let (mut stream, _) = listener.accept().unwrap();
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(2)))
+                    .unwrap();
+                let mut request = Vec::new();
+                let mut byte = [0];
+                while !request.ends_with(b"\r\n\r\n") {
+                    if stream.read(&mut byte).unwrap() == 0 {
+                        break;
+                    }
+                    request.push(byte[0]);
+                }
+                assert!(
+                    String::from_utf8(request)
+                        .unwrap()
+                        .starts_with("GET /releases?per_page=100 ")
+                );
+                write!(stream, "HTTP/1.1 {status} Response\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
+            }
+        });
+        (address, task)
+    }
+
+    fn releases() -> String {
+        let (engine, game) = platform_assets(std::env::consts::OS, std::env::consts::ARCH).unwrap();
+        serde_json::json!([
+            {"tag_name":"launcher@0.2.38","name":"Launcher","published_at":"2026-11-04","prerelease":false,"draft":false,
+             "assets":[{"name":engine,"browser_download_url":"https://github.com/horizon-rust/horizon/releases/download/test/engine","size":4,"digest":null}]},
+            {"tag_name":"nightly","name":"Nightly 2026-11-04 · abc123","published_at":"2026-11-04","prerelease":true,"draft":false,
+             "assets":[{"name":game,"browser_download_url":"https://github.com/horizon-rust/horizon/releases/download/test/game","size":4,"digest":null}]}
+        ]).to_string()
+    }
+
+    #[test]
+    fn update_check_recovers_from_a_temporary_http_failure() {
+        let (url, server) = server(vec![(503, "{}".into()), (200, releases())]);
+        let retries = std::sync::Mutex::new(Vec::new());
+        let catalog = fetch_catalog_at(
+            &Client::builder().no_proxy().build().unwrap(),
+            Channel::Nightly,
+            &url,
+            &AtomicBool::new(false),
+            &[Duration::ZERO; 2],
+            |attempt, _| retries.lock().unwrap().push(attempt),
+        )
+        .unwrap();
+        server.join().unwrap();
+        assert_eq!(catalog.game_version().unwrap(), "nightly-2026-11-04-abc123");
+        assert_eq!(*retries.lock().unwrap(), [2]);
+    }
+
+    #[test]
+    fn invalid_responses_and_rate_limits_are_not_retried() {
+        for reply in [(403, "{}".into()), (200, "invalid JSON".into())] {
+            let (url, server) = server(vec![reply]);
+            let result = fetch_catalog_at(
+                &Client::builder().no_proxy().build().unwrap(),
+                Channel::Nightly,
+                &url,
+                &AtomicBool::new(false),
+                &[Duration::ZERO; 2],
+                |_, _| panic!("a permanent response must not be retried"),
+            );
+            assert!(result.is_err());
+            server.join().unwrap();
+        }
+    }
+
+    #[test]
+    fn cancellation_prevents_another_update_request_after_failure() {
+        let (url, server) = server(vec![(503, "{}".into())]);
+        let cancel = Arc::new(AtomicBool::new(false));
+        let result = fetch_catalog_at(
+            &Client::builder().no_proxy().build().unwrap(),
+            Channel::Nightly,
+            &url,
+            &cancel,
+            &[Duration::from_secs(30)],
+            |_, _| cancel.store(true, Ordering::Relaxed),
+        );
+        assert!(result.unwrap_err().to_string().contains("cancelled"));
+        server.join().unwrap();
+    }
 }
