@@ -60,6 +60,24 @@ The skin PNG chooser uses the desktop file-selection portal. Picking a file gran
 
 Application data lives under `~/.var/app/io.github.marktible.MCRSLauncher/data/mcrslauncher/`, including the official engine, game versions, worlds, mods and compilation cache. Flatpak data is separate from a native MCRS installation. You can open the active data folder in Settings.
 
-Horizon engine and game update checks still work inside the package. MCRS launcher-code updates require a new Flatpak bundle or a configured Flatpak remote; an installed local bundle is not itself an update service.
+Horizon engine and game update checks work inside the package. MCRS Launcher updates are available from the project's signed Flatpak repository, hosted on the generated `flatpak-repo` GitHub branch.
+
+Install with the repository descriptor so future launcher updates work with `flatpak update`:
+
+```sh
+flatpak install --user https://raw.githubusercontent.com/marktible/mcrslauncher/flatpak-repo/io.github.marktible.MCRSLauncher.flatpakref
+flatpak update --user io.github.marktible.MCRSLauncher
+```
+
+For an existing standalone-bundle installation, add the remote and switch the application to it once:
+
+```sh
+flatpak remote-add --user --if-not-exists mcrslauncher https://raw.githubusercontent.com/marktible/mcrslauncher/flatpak-repo/mcrslauncher.flatpakrepo
+flatpak install --user --reinstall mcrslauncher io.github.marktible.MCRSLauncher
+```
+
+Application data is retained. The public key is included in the installation descriptors; repository and app signatures are verified by Flatpak. The runtime continues to come from Flathub.
+
+Only releases published into the signed repository become Flatpak updates. Maintainers publish a verified GitHub release with `python3 scripts/publish-flatpak-repo.py --tag vVERSION --push`; see [releasing](releasing.md). A GitHub release by itself remains a standalone download.
 
 Uninstall the app with `flatpak uninstall --user io.github.marktible.MCRSLauncher`. Flatpak retains application data unless explicitly asked to remove it.

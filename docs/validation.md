@@ -87,3 +87,11 @@ Reduced the window minimum from 940×640 to 480×360. Narrow windows use a compa
 All 43 existing tests pass; formatting, Clippy and the Flatpak source-lock check pass. Visually checked all four real desktop pages at 480 pixels wide with isolated account/mod metadata, including a long player name and native version. Also checked Play at 700×700, 1140×780 and 1140×360, and Mods at 480×360. The resize checks caught and resolved inherited horizontal card layout and overlapping sidebar footer text before packaging.
 
 Confirmed the final Play layout keeps its launch button visible at 480×360 and 1140×360. Rebuilt and installed the 0.2.5 Flatpak, verified the bundle checksum and runtime dependencies, and confirmed its installed command reports 0.2.5.
+
+## Signed Flatpak update repository
+
+Published the verified v0.2.5 release bundle as a signed OSTree repository on the generated `flatpak-repo` branch, served over GitHub's raw HTTPS endpoint. App and repository metadata are signed with a dedicated project key. Only the public key is committed; the maintainer's private key remains in a separate local GPG directory. The publishing script verifies the GitHub asset's size and SHA-256 digest, rejects unrelated nonempty output directories, and uses a Git lease when replacing the generated snapshot.
+
+An isolated OSTree client rejected the repository without the trusted public key, then successfully verified and pulled it after importing that key. The actual user installation was migrated from its standalone-bundle origin to `mcrslauncher`. Both `gpg-verify` and `gpg-verify-summary` are enabled. The installed command still reports 0.2.5, and `flatpak update --user --assumeyes --noninteractive io.github.marktible.MCRSLauncher` succeeds with the current version up to date. Standard `flatpak update` includes matching per-user refs as well as system refs.
+
+Future GitHub releases require the documented local signed-repository publication step before Flatpak clients see the update. The private signing key has not been placed in GitHub Actions, so that publication is a maintainer operation rather than an automatic part of the release workflow.
