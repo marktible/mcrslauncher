@@ -15,7 +15,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        os: [ubuntu-22.04, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -23,6 +23,8 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: ${{ runner.os == 'Linux' && 'linux-glibc235-v1' || 'v0-rust' }}
       - name: Linux development libraries
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libwayland-dev libx11-dev libxi-dev libgl1-mesa-dev
@@ -30,6 +32,9 @@ jobs:
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo test --locked
       - run: cargo build --release --locked
+      - name: Check Linux ABI baseline
+        if: runner.os == 'Linux'
+        run: python3 scripts/check-linux-abi.py target/release/mcrslauncher --max-glibc 2.35
       - name: Check executable
         shell: bash
         run: |

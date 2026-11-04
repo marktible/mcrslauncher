@@ -1,0 +1,90 @@
+name: Repair native Linux release
+
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/repair-linux.yml']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to rebuild on the Linux compatibility baseline
+        required: true
+        default: v0.2.5
+
+permissions:
+  contents: write
+
+jobs:
+  rebuild:
+    runs-on: ubuntu-22.04
+    env:
+      RELEASE_TAG: ${{ inputs.tag || 'v0.2.5' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Save compatibility checker
+        run: cp scripts/check-linux-abi.py "$RUNNER_TEMP/check-linux-abi.py"
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          persist-credentials: false
+      - name: Hold release as draft during correction
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=true
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Linux development libraries
+        run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libwayland-dev libx11-dev libxi-dev libgl1-mesa-dev
+      - run: cargo build --release --locked -j 2
+      - name: Verify executable and ABI
+        run: |
+          ./target/release/mcrslauncher --help
+          python3 "$RUNNER_TEMP/check-linux-abi.py" target/release/mcrslauncher --max-glibc 2.35
+      - name: Download existing release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir release-assets
+          cd release-assets
+          sha256sum -c SHA256SUMS
+      - name: Replace Linux package and checksums
+        shell: python
+        run: |
+          import hashlib, os, pathlib, re, shutil, tarfile, tempfile, tomllib
+          root = pathlib.Path.cwd()
+          tag = os.environ['RELEASE_TAG']
+          version = tomllib.loads((root / 'Cargo.toml').read_text())['package']['version']
+          assert tag == f'v{version}' and re.fullmatch(r'v\d+\.\d+\.\d+', tag)
+          assets = root / 'release-assets'
+          name = f'mcrslauncher-{tag}-linux-x86_64'
+          notes = (root / f'docs/releases/{tag}.md').read_text()
+          notes += '\nNative Linux packages are built on Ubuntu 22.04 and require glibc 2.35 or newer.\n'
+          (root / 'release-notes.md').write_text(notes)
+          with tempfile.TemporaryDirectory() as temporary:
+              package = pathlib.Path(temporary) / name
+              package.mkdir()
+              shutil.copyfile(root / 'target/release/mcrslauncher', package / 'mcrslauncher')
+              (package / 'mcrslauncher').chmod(0o755)
+              for document in ['LICENSE', 'README.md']:
+                  shutil.copyfile(root / document, package / document)
+              (package / f'{tag}.md').write_text(notes)
+              with tarfile.open(assets / f'{name}.tar.gz', 'w:gz') as archive:
+                  archive.add(package, arcname=name)
+          checksums = []
+          for path in sorted(assets.iterdir()):
+              if path.name == 'SHA256SUMS':
+                  continue
+              with path.open('rb') as stream:
+                  digest = hashlib.file_digest(stream, 'sha256').hexdigest()
+              checksums.append(f'{digest}  {path.name}\n')
+          (assets / 'SHA256SUMS').write_text(''.join(checksums))
+      - name: Publish corrected Linux download
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "$RELEASE_TAG" "release-assets/mcrslauncher-$RELEASE_TAG-linux-x86_64.tar.gz" release-assets/SHA256SUMS --repo "$GITHUB_REPOSITORY" --clobber
+          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --notes-file release-notes.md --draft=false --latest
