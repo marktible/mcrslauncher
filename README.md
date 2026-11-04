@@ -4,6 +4,8 @@ A lightweight, fully native Rust desktop launcher for [Horizon](https://github.c
 
 ![MCRS Launcher](assets/preview.png)
 
+Download the Flatpak or a native desktop archive from [GitHub Releases](https://github.com/marktible/mcrslauncher/releases/latest). Published packages include SHA-256 checksums.
+
 ## Run
 
 For a desktop Flatpak installation, see [Flatpak packaging](docs/flatpak.md). Build and install a local bundle with `python3 scripts/build-flatpak.py --install`.

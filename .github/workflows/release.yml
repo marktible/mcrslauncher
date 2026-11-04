@@ -1,0 +1,49 @@
+name: Publish release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  native:
+    uses: ./.github/workflows/ci.yml
+  flatpak:
+    uses: ./.github/workflows/flatpak.yml
+  publish:
+    needs: [native, flatpak]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Package release downloads
+        run: python3 scripts/package-release.py --artifacts artifacts --output dist/release --tag "$GITHUB_REF_NAME"
+      - name: Publish verified release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          release_tag="$GITHUB_REF_NAME"
+          if gh release view "$release_tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            existing_draft=$(gh release view "$release_tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)
+            if [[ "$existing_draft" != "true" ]]; then
+              printf 'Release %s is already published; refusing to replace its assets.\n' "$release_tag" >&2
+              exit 1
+            fi
+          else
+            gh release create "$release_tag" --repo "$GITHUB_REPOSITORY" --verify-tag --draft \
+              --title "MCRS Launcher ${release_tag#v}" --notes-file "docs/releases/$release_tag.md"
+          fi
+          gh release upload "$release_tag" dist/release/* --repo "$GITHUB_REPOSITORY" --clobber
+          gh release edit "$release_tag" --repo "$GITHUB_REPOSITORY" --draft=false --latest
