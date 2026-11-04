@@ -6,6 +6,8 @@ A lightweight, fully native Rust desktop launcher for [Horizon](https://github.c
 
 ## Run
 
+For a desktop Flatpak installation, see [Flatpak packaging](docs/flatpak.md). Build and install a local bundle with `python3 scripts/build-flatpak.py --install`.
+
 Install [Rust](https://rustup.rs/) (1.88 or newer), then:
 
 ```sh

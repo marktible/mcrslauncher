@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.marktible.MCRSLauncher</id>
+  <name>MCRS Launcher</name>
+  <summary>Play Horizon and build native Minecraft mods</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <developer id="io.github.marktible">
+    <name>marktible</name>
+  </developer>
+  <description>
+    <p>A lightweight native Rust desktop launcher for Horizon, the Rust implementation of Minecraft.</p>
+    <ul>
+      <li>Sign in with the Microsoft account that owns Minecraft: Java Edition.</li>
+      <li>Install current Horizon builds and check for updates.</li>
+      <li>Import native Horizon mods from GitHub and compile them inside the sandbox.</li>
+    </ul>
+    <p>Native mod builds use the Freedesktop SDK runtime's compiler and development libraries. The initial setup downloads Horizon and its required game resources.</p>
+    <p>Unofficial software. Not affiliated with Mojang or Microsoft. Minecraft assets are not included.</p>
+  </description>
+  <launchable type="desktop-id">io.github.marktible.MCRSLauncher.desktop</launchable>
+  <provides><binary>mcrslauncher</binary></provides>
+  <categories><category>Game</category></categories>
+  <url type="homepage">https://github.com/marktible/mcrslauncher</url>
+  <url type="bugtracker">https://github.com/marktible/mcrslauncher/issues</url>
+  <content_rating type="oars-1.1"/>
+  <releases><release version="0.1.0" date="2026-11-04"/></releases>
+</component>

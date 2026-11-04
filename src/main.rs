@@ -19,7 +19,7 @@ fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_title("MCRS · Horizon Launcher")
-            .with_app_id("mcrslauncher")
+            .with_app_id(std::env::var("FLATPAK_ID").unwrap_or_else(|_| "mcrslauncher".into()))
             .with_icon(icon())
             .with_inner_size([1140., 780.])
             .with_min_inner_size([940., 640.]),

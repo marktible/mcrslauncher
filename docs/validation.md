@@ -25,3 +25,11 @@ The application itself does not improve game FPS. The performance and release pr
 ## GitHub repository
 
 The source is committed locally and connected over SSH to `marktible/mcrslauncher`. The repository's initial commit and MIT license are preserved. GitHub reported the repository as public when it was connected; the source push is pending a change to private visibility, as requested. SSH access supports pushing commits but cannot change GitHub repository visibility.
+
+## Flatpak package
+
+Built and installed `io.github.marktible.MCRSLauncher` for Linux x86-64 using the Freedesktop SDK 26.08 runtime. The local bundle is approximately 3.5 MiB; the installed application is approximately 10.5 MB, plus the shared SDK runtime. The SDK download initially timed out and succeeded on retry.
+
+Verified the release executable against the actual Flatpak loader, compiled a C header probe inside the SDK, and checked ALSA/libudev development metadata. The installed runtime reported GCC 16.2.0, glibc 2.44, ALSA 1.2.16.1 and libudev 261. AppStream metadata validation passed. The generated source manifest contains 370 archives with checksums matching Cargo.lock. A source-only `flatpak-builder` build and the new GitHub Actions workflow have not been run locally; the delivered bundle uses the compiled release executable and was tested in the selected runtime.
+
+The installed Flatpak passed its command-line smoke test and opened the Settings GUI on Wayland, with its window application ID matching the exported desktop entry. Permissions were checked after installation: network, IPC, Wayland/fallback X11, PulseAudio, graphics devices and Secret Service access. It has no blanket home/filesystem permission or host command-execution permission. The earlier limits on account sign-in, game preparation and complete native mod compilation still apply.

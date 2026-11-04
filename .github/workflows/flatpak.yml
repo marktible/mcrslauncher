@@ -1,0 +1,36 @@
+name: Flatpak bundle
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'assets/**'
+      - 'packaging/flatpak/**'
+      - 'scripts/*flatpak*'
+      - '.github/workflows/flatpak.yml'
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  flatpak:
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:freedesktop-26.08
+      options: --privileged
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check pinned Cargo sources
+        run: python3 scripts/flatpak-cargo-sources.py --check
+      - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+        with:
+          bundle: io.github.marktible.MCRSLauncher.flatpak
+          manifest-path: packaging/flatpak/io.github.marktible.MCRSLauncher.json
+          cache-key: flatpak-x86_64-26.08
+          arch: x86_64
+          branch: stable

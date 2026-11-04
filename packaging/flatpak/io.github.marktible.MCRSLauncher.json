@@ -1,0 +1,46 @@
+{
+  "app-id": "io.github.marktible.MCRSLauncher",
+  "runtime": "org.freedesktop.Sdk",
+  "runtime-version": "26.08",
+  "sdk": "org.freedesktop.Sdk",
+  "sdk-extensions": ["org.freedesktop.Sdk.Extension.rust-stable"],
+  "command": "mcrslauncher",
+  "finish-args": [
+    "--share=network",
+    "--share=ipc",
+    "--socket=wayland",
+    "--socket=fallback-x11",
+    "--socket=pulseaudio",
+    "--device=dri",
+    "--talk-name=org.freedesktop.secrets"
+  ],
+  "build-options": {
+    "append-path": "/usr/lib/sdk/rust-stable/bin",
+    "env": {
+      "CARGO_HOME": "/run/build/mcrslauncher/cargo",
+      "CARGO_NET_OFFLINE": "true"
+    }
+  },
+  "modules": [
+    {
+      "name": "mcrslauncher",
+      "buildsystem": "simple",
+      "build-commands": [
+        "cargo build --release --locked --offline -j ${FLATPAK_BUILDER_N_JOBS}",
+        "install -Dm755 target/release/mcrslauncher /app/bin/mcrslauncher",
+        "install -Dm644 packaging/flatpak/io.github.marktible.MCRSLauncher.desktop /app/share/applications/io.github.marktible.MCRSLauncher.desktop",
+        "install -Dm644 assets/mcrslauncher.svg /app/share/icons/hicolor/scalable/apps/io.github.marktible.MCRSLauncher.svg",
+        "install -Dm644 packaging/flatpak/io.github.marktible.MCRSLauncher.metainfo.xml /app/share/metainfo/io.github.marktible.MCRSLauncher.metainfo.xml",
+        "install -Dm644 LICENSE /app/share/licenses/io.github.marktible.MCRSLauncher/LICENSE"
+      ],
+      "sources": [
+        {
+          "type": "dir",
+          "path": "../..",
+          "skip": [".git", ".flatpak-builder", "target", "dist", "flatpak-build", "flatpak-repo"]
+        },
+        "cargo-sources.json"
+      ]
+    }
+  ]
+}
