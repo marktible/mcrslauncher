@@ -214,7 +214,7 @@ pub fn verify_digest(bytes: &[u8], digest: &str) -> Result<()> {
 pub fn download_verified(
     client: &Client,
     asset: &Asset,
-    progress: impl Fn(f32) -> Result<()> + Sync,
+    progress: impl Fn(u64, u64) -> Result<()> + Sync,
 ) -> Result<Vec<u8>> {
     let url = url::Url::parse(&asset.browser_download_url)?;
     ensure!(
@@ -239,7 +239,7 @@ pub fn download_verified(
         download_stream(client, &url, asset.size, &progress)?
     };
     verify_digest(&bytes, checksum)?;
-    progress(1.)?;
+    progress(asset.size, asset.size)?;
     Ok(bytes)
 }
 
@@ -247,7 +247,7 @@ fn download_stream(
     client: &Client,
     url: &url::Url,
     size: u64,
-    progress: &(impl Fn(f32) -> Result<()> + Sync),
+    progress: &(impl Fn(u64, u64) -> Result<()> + Sync),
 ) -> Result<Vec<u8>> {
     let mut response = client.get(url.clone()).send()?.error_for_status()?;
     let mut bytes = Vec::with_capacity(size as usize);
@@ -264,7 +264,7 @@ fn download_stream(
         );
         bytes.extend_from_slice(&buffer[..read]);
         if last.elapsed() >= Duration::from_millis(100) {
-            progress((bytes.len() as f32 / size as f32).min(1.))?;
+            progress(bytes.len() as u64, size)?;
             last = std::time::Instant::now();
         }
     }
@@ -278,7 +278,7 @@ fn download_parallel(
     client: &Client,
     url: &url::Url,
     size: usize,
-    progress: &(impl Fn(f32) -> Result<()> + Sync),
+    progress: &(impl Fn(u64, u64) -> Result<()> + Sync),
 ) -> Result<Vec<u8>> {
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     let mut bytes = vec![0; size];
@@ -329,7 +329,7 @@ fn download_parallel(
                             offset += count;
                             let total = downloaded.fetch_add(count, Ordering::Relaxed) + count;
                             if last.elapsed() >= Duration::from_millis(200) {
-                                progress(total as f32 / size as f32)?;
+                                progress(total as u64, size as u64)?;
                                 last = std::time::Instant::now();
                             }
                         }
@@ -354,7 +354,7 @@ fn download_parallel(
         Ok(())
     });
     if unsupported.load(Ordering::Relaxed) {
-        progress(0.)?;
+        progress(0, size as u64)?;
         return download_stream(client, url, size as u64, progress);
     }
     result?;

@@ -303,3 +303,21 @@ fn native_build_uses_requested_profile_and_clears_pending_changes_on_success() {
     assert!(arguments.contains("--update\n"));
     assert!(!engine.receipt().mods_dirty);
 }
+
+#[cfg(unix)]
+#[test]
+fn snapshot_preserves_the_selected_game_folder_and_public_skin_metadata() {
+    let script = r#"case "$2" in
+account) printf '%s\n' '{"accounts":[{"name":"Player","uuid":"0123456789abcdef0123456789abcdef","selected":true}],"sign_in_configured":true,"owner":true}';;
+versions) printf '%s\n' '{"installed":["test"],"selected":"test"}';;
+instance) printf '[{"id":"main","selected":true,"home":"%s/selected"}]\n' "$HORIZON_HOME";;
+esac"#;
+    let (_directory, engine) = fake_engine(script);
+    fs::write(engine.paths.engine_home().join("accounts.json"), serde_json::json!({"accounts":[{"uuid":"0123456789abcdef0123456789abcdef","name":"Player","skin":["https://textures.minecraft.net/texture/abcdef","slim"]}]}).to_string()).unwrap();
+    let snapshot = engine.snapshot().unwrap();
+    assert_eq!(
+        snapshot.game_home,
+        engine.paths.game_home().join("selected")
+    );
+    assert_eq!(snapshot.accounts[0].skin.as_ref().unwrap().1, "slim");
+}

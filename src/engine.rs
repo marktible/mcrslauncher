@@ -3,6 +3,7 @@
 use crate::{
     github::{self, Catalog},
     model::{self, Account, Mod, Paths, Receipt, Settings, Snapshot},
+    progress::{FileProgress, FileTransfer, TransferMeter, TransferProgress},
 };
 use anyhow::{Context, Result, bail, ensure};
 use serde_json::Value;
@@ -11,18 +12,18 @@ use std::{
     io::{BufRead, BufReader, Read},
     process::{Command, Stdio},
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 #[derive(Debug)]
 pub enum Output {
     Log(String),
     Stage(String),
-    Progress(f32),
+    Progress(TransferProgress),
     Login { url: String, code: String },
     Playing,
 }
@@ -112,11 +113,19 @@ impl Engine {
         report(Output::Stage(
             "Downloading the official Horizon engine".into(),
         ));
-        let bytes = github::download_verified(&self.client, &catalog.engine_asset, |p| {
-            self.check_cancel()?;
-            report(Output::Progress(p));
-            Ok(())
-        })?;
+        let meter = Mutex::new(TransferMeter::default());
+        let started = Instant::now();
+        let bytes =
+            github::download_verified(&self.client, &catalog.engine_asset, |bytes, total| {
+                self.check_cancel()?;
+                let progress = meter.lock().unwrap_or_else(|e| e.into_inner()).observe(
+                    bytes,
+                    total,
+                    started.elapsed(),
+                );
+                report(Output::Progress(progress));
+                Ok(())
+            })?;
         self.check_cancel()?;
         github::extract_engine(&bytes, &catalog.engine_asset.name, &self.paths.engine())?;
         receipt.tag = catalog.engine.tag_name.clone();
@@ -137,6 +146,16 @@ impl Engine {
 
     /// Every argument is passed directly to the process, with no shell interpolation.
     pub fn run(&self, args: &[&str], report: Reporter<'_>, quiet: bool) -> Result<String> {
+        self.run_process(args, report, quiet, None)
+    }
+
+    fn run_process(
+        &self,
+        args: &[&str],
+        report: Reporter<'_>,
+        quiet: bool,
+        mut transfer: Option<FileTransfer>,
+    ) -> Result<String> {
         self.check_cancel()?;
         let mut command = Command::new(self.paths.engine());
         command
@@ -161,6 +180,8 @@ impl Engine {
             .context("Cannot start Horizon; its system libraries may be missing")?;
         let stdout = child.stdout.take().context("Missing process output")?;
         let stderr = child.stderr.take().context("Missing process diagnostics")?;
+        let started = Instant::now();
+        let mut sampled = Instant::now();
         let (status, output) = thread::scope(|scope| -> Result<_> {
             let out = scope.spawn(|| read_output(stdout, quiet, false, report));
             let err = scope.spawn(|| read_output(stderr, quiet, true, report));
@@ -171,6 +192,19 @@ impl Engine {
                 }
                 if let Some(status) = child.try_wait()? {
                     break status;
+                }
+                if sampled.elapsed() >= Duration::from_millis(300) {
+                    if let Some(progress) =
+                        transfer.as_mut().and_then(|t| t.poll(started.elapsed()))
+                    {
+                        match progress {
+                            FileProgress::Download(progress) => report(Output::Progress(progress)),
+                            FileProgress::Unpacking => report(Output::Stage(
+                                "Verifying and unpacking the game download".into(),
+                            )),
+                        }
+                    }
+                    sampled = Instant::now();
                 }
                 thread::sleep(Duration::from_millis(80));
             };
@@ -236,8 +270,21 @@ impl Engine {
             });
         }
         mods.sort_by(|a, b| a.id.cmp(&b.id));
+        let mut profiles = serde_json::from_value::<Vec<Account>>(accounts["accounts"].clone())?;
+        // This upstream file contains public profile metadata, never authentication secrets.
+        if let Ok(bytes) = fs::read(self.paths.engine_home().join("accounts.json"))
+            && let Ok(saved) = serde_json::from_slice::<Value>(&bytes)
+        {
+            for account in &mut profiles {
+                account.skin = saved["accounts"]
+                    .as_array()
+                    .and_then(|items| items.iter().find(|a| a["uuid"] == account.uuid))
+                    .and_then(|a| serde_json::from_value(a["skin"].clone()).ok())
+                    .flatten();
+            }
+        }
         Ok(Snapshot {
-            accounts: serde_json::from_value::<Vec<Account>>(accounts["accounts"].clone())?,
+            accounts: profiles,
             sign_in_configured: accounts["sign_in_configured"].as_bool().unwrap_or(false),
             owner: accounts["owner"].as_bool().unwrap_or(false),
             installed: serde_json::from_value(versions["installed"].clone())?,
@@ -246,6 +293,7 @@ impl Engine {
                 .is_some_and(|v| v.starts_with("native-")),
             selected_version,
             mods,
+            game_home: home,
         })
     }
 
@@ -266,8 +314,19 @@ impl Engine {
             || receipt.game_digest != fingerprint
             || !snapshot.installed.contains(&version);
         if changed {
-            report(Output::Stage(format!("Installing {}", catalog.game.name)));
-            self.run(&["install", &version], report, false)?;
+            report(Output::Stage(format!("Installing {version}")));
+            let archive = self
+                .paths
+                .engine_home()
+                .join("versions")
+                .join(format!(".{version}.partial"))
+                .join("download");
+            self.run_process(
+                &["install", &version],
+                report,
+                false,
+                Some(FileTransfer::new(archive, catalog.game_asset.size)),
+            )?;
             receipt.game_tag = version.clone();
             receipt.game_digest = fingerprint;
             self.save_receipt(&receipt)?;
@@ -432,4 +491,45 @@ fn terminate_tree(child: &mut std::process::Child) {
             .output();
     }
     let _ = child.kill();
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn reports_progress_when_the_engine_has_pipes_instead_of_a_terminal() {
+        let directory = tempfile::tempdir().unwrap();
+        let paths = Paths {
+            root: directory.path().to_path_buf(),
+        };
+        paths.create().unwrap();
+        fs::write(paths.engine(), "#!/bin/sh\nmkdir -p \"$HORIZON_LAUNCHER_HOME/versions/.test.partial\"\nprintf 12345 > \"$HORIZON_LAUNCHER_HOME/versions/.test.partial/download\"\nsleep 1\nprintf 67890 >> \"$HORIZON_LAUNCHER_HOME/versions/.test.partial/download\"\nsleep 1\n").unwrap();
+        fs::set_permissions(paths.engine(), fs::Permissions::from_mode(0o755)).unwrap();
+        let engine = Engine::new(paths.clone(), Arc::new(AtomicBool::new(false))).unwrap();
+        let events = Mutex::new(Vec::new());
+        engine
+            .run_process(
+                &["install", "test"],
+                &|event| events.lock().unwrap().push(event),
+                false,
+                Some(FileTransfer::new(
+                    paths.engine_home().join("versions/.test.partial/download"),
+                    10,
+                )),
+            )
+            .unwrap();
+        let events = events.into_inner().unwrap();
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, Output::Progress(p) if p.downloaded == 5 && p.total == 10))
+        );
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, Output::Stage(stage) if stage.contains("unpacking")))
+        );
+    }
 }

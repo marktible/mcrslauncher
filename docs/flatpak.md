@@ -56,6 +56,8 @@ The application uses **org.freedesktop.Sdk 26.08** as its runtime. This includes
 
 Permissions are limited to networking, display access, graphics acceleration, audio, IPC and the Secret Service keychain. The package does not grant host command execution or blanket access to the host home directory. URLs open using the desktop portal. Minecraft resources can be downloaded by Horizon for the signed-in account, so access to a host `.minecraft` folder is unnecessary.
 
+The skin PNG chooser uses the desktop file-selection portal. Picking a file grants access to that file without adding broad filesystem permissions. The game-folder shortcut opens the selected instance's own directory through the desktop opener.
+
 Application data lives under `~/.var/app/io.github.marktible.MCRSLauncher/data/mcrslauncher/`, including the official engine, game versions, worlds, mods and compilation cache. Flatpak data is separate from a native MCRS installation. You can open the active data folder in Settings.
 
 Horizon engine and game update checks still work inside the package. MCRS launcher-code updates require a new Flatpak bundle or a configured Flatpak remote; an installed local bundle is not itself an update service.

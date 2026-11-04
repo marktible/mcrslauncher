@@ -27,7 +27,10 @@ Use `--page mods`, `--page updates`, or `--page settings` to open a page directl
 
 ## Features
 
-- Microsoft device-code authentication, ownership checks, account selection and sign-out through Horizon's official CLI. Horizon manages credentials and keychain integration. MCRS never reads access or refresh tokens.
+- Microsoft device-code authentication, ownership checks, account selection and sign-out through Horizon's official CLI. Horizon manages credentials and keychain integration.
+- Persistent download progress with percentage, transferred bytes, speed, ETA and elapsed time. Preparation and builds show activity when a percentage is unavailable.
+- **Open game folder** opens the active instance directly from Play or Settings.
+- Actual Minecraft skin heads, cached locally with their hat layer. **Change skin** opens a PNG picker and applies classic or slim skins to the signed-in Java Edition account.
 - GitHub native mod import from repository, branch, commit or release URLs; incremental builds, source links, removal with rebuilding, and explicit trust before importing new mod source.
 - Separate engine and game release discovery. Nightly is selected by default; immutable `nightly-<date>-<commit>` versions and asset digests detect new builds even when the GitHub tag stays `nightly`.
 - Startup and 15-minute update checks; update before play is enabled by default. Stable channel and manual checks are available.
@@ -78,9 +81,11 @@ The opt-in live contract test downloads the official engine and current Nightly 
 cargo test --locked --test upstream -- --ignored --nocapture
 ```
 
-`src/github.rs` owns release discovery and verified engine extraction. `src/engine.rs` is the typed subprocess bridge. `src/worker.rs` serializes mutations away from the UI thread. `src/ui.rs` implements the desktop interface. Credentials never cross this bridge. Logs are capped at 500 displayed lines and 128 KiB of captured output per process stream.
+`src/github.rs` owns release discovery and verified engine extraction. `src/engine.rs` is the typed subprocess bridge. `src/worker.rs` serializes game operations away from the UI thread. `src/progress.rs` observes the installer's archive file instead of relying on terminal-only progress output. `src/profiles.rs` caches public skins and handles the file chooser and skin upload independently of downloads. `src/ui.rs` implements the desktop interface. Logs are capped at 500 displayed lines and 128 KiB of captured output per process stream.
 
-The launcher uses a single persistent worker and requests UI redraws only on input, worker events, and scheduled checks. Performance depends on the system and mods; no game FPS improvement is claimed by the launcher.
+The game and profile workers sleep when idle. The UI redraws on input, worker events and scheduled checks, with a low-frequency activity animation only while a job is running. Performance depends on the system and mods; no game FPS improvement is claimed by the launcher.
+
+Horizon remains responsible for sign-in and refresh credentials. For a requested skin upload, the profile worker consumes Horizon's private read-once session handoff, removes that file immediately, and sends its temporary Minecraft access token only to Minecraft's skin service. The skin handler does not persist tokens or send them to UI events, activity logs, or skin-image hosts.
 
 See [validation notes](docs/validation.md) for the checks actually completed, performance observations, and remaining live-test limits.
 

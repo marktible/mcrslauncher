@@ -4,11 +4,13 @@ use eframe::egui::{
 use mcrslauncher::{
     engine::{self, Output},
     github::{self, Catalog},
-    model::{BuildProfile, Channel, Paths, Receipt, Settings, Snapshot},
+    model::{Account, BuildProfile, Channel, Paths, Receipt, Settings, Snapshot},
+    profiles::{ProfileCommand, ProfileEvent, ProfileWorker, SkinFile, SkinModel},
+    progress::{TransferProgress, format_duration},
     worker::{Action, Event, Worker},
 };
 use std::{
-    collections::VecDeque,
+    collections::{HashMap, VecDeque},
     time::{Duration, Instant, SystemTime},
 };
 
@@ -34,8 +36,20 @@ enum Confirm {
     Remove(String),
 }
 
+struct SkinEditor {
+    account: Account,
+    model: SkinModel,
+    skin: Option<SkinFile>,
+    preview: Option<egui::TextureHandle>,
+    choosing: bool,
+    uploading: bool,
+}
+
 pub struct Launcher {
     worker: Worker,
+    profiles: ProfileWorker,
+    heads: HashMap<String, egui::TextureHandle>,
+    skin_editor: Option<SkinEditor>,
     paths: Paths,
     settings: Settings,
     snapshot: Snapshot,
@@ -45,7 +59,9 @@ pub struct Launcher {
     page: Page,
     busy: bool,
     stage: String,
-    progress: Option<f32>,
+    progress: Option<TransferProgress>,
+    job_started: Option<Instant>,
+    last_activity: String,
     error: Option<String>,
     notice: String,
     login: Option<(String, String)>,
@@ -76,6 +92,9 @@ impl Launcher {
         let pending_check = settings.auto_check;
         let mut app = Self {
             worker: Worker::new(paths.clone(), cc.egui_ctx.clone()),
+            profiles: ProfileWorker::new(paths.clone(), cc.egui_ctx.clone()),
+            heads: HashMap::new(),
+            skin_editor: None,
             paths,
             catalog_channel: settings.channel,
             settings,
@@ -91,6 +110,8 @@ impl Launcher {
             busy: false,
             stage: String::new(),
             progress: None,
+            job_started: None,
+            last_activity: String::new(),
             error: None,
             notice: String::new(),
             login: None,
@@ -119,6 +140,8 @@ impl Launcher {
                 self.busy = true;
                 self.stage = label;
                 self.progress = None;
+                self.job_started = Some(Instant::now());
+                self.last_activity.clear();
                 self.error = None;
                 self.notice.clear();
             }
@@ -134,6 +157,7 @@ impl Launcher {
             };
             match event {
                 Event::Output(Output::Log(line)) => {
+                    self.last_activity = line.trim().to_string();
                     if self.logs.len() == 500 {
                         self.logs.pop_front();
                     }
@@ -142,6 +166,7 @@ impl Launcher {
                 Event::Output(Output::Stage(stage)) => {
                     self.stage = stage;
                     self.progress = None;
+                    self.last_activity.clear();
                 }
                 Event::Output(Output::Progress(progress)) => self.progress = Some(progress),
                 Event::Output(Output::Login { url, code }) => {
@@ -156,7 +181,12 @@ impl Launcher {
                         ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
                     }
                 }
-                Event::Snapshot(snapshot) => self.snapshot = snapshot,
+                Event::Snapshot(snapshot) => {
+                    let mut accounts = snapshot.accounts.clone();
+                    accounts.sort_by_key(|account| !account.selected);
+                    let _ = self.profiles.send(ProfileCommand::Load(accounts));
+                    self.snapshot = snapshot;
+                }
                 Event::Catalog(catalog) => {
                     self.catalog = Some(*catalog);
                     self.catalog_channel = self.settings.channel;
@@ -168,6 +198,7 @@ impl Launcher {
                     self.busy = false;
                     self.login = None;
                     self.progress = None;
+                    self.job_started = None;
                     if self.playing {
                         ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
                         self.playing = false;
@@ -186,6 +217,59 @@ impl Launcher {
             }
             if index == 127 {
                 ctx.request_repaint();
+            }
+        }
+        for _ in 0..16 {
+            let Ok(event) = self.profiles.events.try_recv() else {
+                break;
+            };
+            match event {
+                ProfileEvent::Head { uuid, rgba } => {
+                    let image = egui::ColorImage::from_rgba_unmultiplied([8, 8], &rgba);
+                    self.heads.insert(
+                        uuid.clone(),
+                        ctx.load_texture(
+                            format!("profile-{uuid}"),
+                            image,
+                            egui::TextureOptions::NEAREST,
+                        ),
+                    );
+                }
+                ProfileEvent::Chosen { uuid, skin } => {
+                    if let Some(editor) = &mut self.skin_editor
+                        && editor.account.uuid == uuid
+                    {
+                        editor.choosing = false;
+                        if let Some(skin) = skin {
+                            editor.preview = Some(ctx.load_texture(
+                                "skin-preview",
+                                egui::ColorImage::from_rgba_unmultiplied([8, 8], &skin.head),
+                                egui::TextureOptions::NEAREST,
+                            ));
+                            editor.skin = Some(skin);
+                        }
+                    }
+                }
+                ProfileEvent::Uploaded { uuid } => {
+                    if self
+                        .skin_editor
+                        .as_ref()
+                        .is_some_and(|e| e.account.uuid == uuid)
+                    {
+                        self.skin_editor = None;
+                    }
+                    self.notice = "Minecraft skin updated. New game sessions will use it.".into();
+                    if !self.busy {
+                        self.start(Action::Refresh);
+                    }
+                }
+                ProfileEvent::Failed { message } => {
+                    if let Some(editor) = &mut self.skin_editor {
+                        editor.choosing = false;
+                        editor.uploading = false;
+                    }
+                    self.error = Some(message);
+                }
             }
         }
         if !self.busy
@@ -301,8 +385,9 @@ impl Launcher {
     }
 
     fn footer(&mut self, ctx: &egui::Context) {
+        let working = self.busy && !self.playing;
         egui::TopBottomPanel::bottom("status")
-            .exact_height(45.)
+            .exact_height(if working { 95. } else { 45. })
             .frame(
                 Frame::new()
                     .fill(PANEL)
@@ -319,7 +404,10 @@ impl Launcher {
                     } else {
                         "Ready for your next adventure"
                     };
-                    ui.add(egui::Label::new(RichText::new(text).size(11.).color(MUTED)).truncate());
+                    ui.add_sized(
+                        [ui.available_width() - 190., 18.],
+                        egui::Label::new(RichText::new(text).size(11.).color(MUTED)).truncate(),
+                    );
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         if ui
                             .small_button(if self.show_logs {
@@ -340,6 +428,58 @@ impl Launcher {
                         }
                     });
                 });
+                if working {
+                    if let Some(progress) = &self.progress {
+                        ui.add(
+                            egui::ProgressBar::new(progress.fraction())
+                                .fill(ACCENT)
+                                .desired_height(12.),
+                        );
+                    } else {
+                        let (rect, _) = ui.allocate_exact_size(
+                            egui::vec2(ui.available_width(), 9.),
+                            egui::Sense::hover(),
+                        );
+                        ui.painter().rect_filled(rect, 4., LINE);
+                        let elapsed = self
+                            .job_started
+                            .map(|t| t.elapsed().as_secs_f32())
+                            .unwrap_or_default();
+                        let width = rect.width() * 0.22;
+                        let x = rect.left()
+                            + (rect.width() - width) * (elapsed * 1.5).sin().mul_add(0.5, 0.5);
+                        ui.painter().rect_filled(
+                            egui::Rect::from_min_size(
+                                egui::pos2(x, rect.top()),
+                                egui::vec2(width, rect.height()),
+                            ),
+                            4.,
+                            ACCENT,
+                        );
+                    }
+                    let elapsed =
+                        format_duration(self.job_started.map(|t| t.elapsed()).unwrap_or_default());
+                    let detail = self
+                        .progress
+                        .as_ref()
+                        .map(TransferProgress::description)
+                        .unwrap_or_else(|| {
+                            if self.last_activity.is_empty() {
+                                "Working…".into()
+                            } else {
+                                self.last_activity.clone()
+                            }
+                        });
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new(format!("{detail} · elapsed {elapsed}"))
+                                .size(11.)
+                                .color(MUTED),
+                        )
+                        .truncate(),
+                    );
+                    ctx.request_repaint_after(Duration::from_millis(250));
+                }
             });
     }
 
@@ -349,6 +489,9 @@ impl Launcher {
         ui.horizontal(|ui| {
             ui.label(RichText::new("Your next adventure").size(22.).strong());
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                if ui.button("Open game folder").clicked() {
+                    self.open(self.game_folder());
+                }
                 badge(ui, "NATIVE RUST", GREEN);
             });
         });
@@ -431,11 +574,10 @@ impl Launcher {
                         .iter()
                         .find(|a| a.selected)
                         .or(self.snapshot.accounts.first())
+                        .cloned()
                     {
                         ui.horizontal(|ui| {
-                            let (rect, _) =
-                                ui.allocate_exact_size(egui::vec2(40., 40.), egui::Sense::hover());
-                            avatar(ui.painter(), rect);
+                            self.profile_avatar(ui, &account, 40.);
                             ui.vertical(|ui| {
                                 ui.label(RichText::new(&account.name).size(17.).strong());
                                 ui.label(RichText::new("Microsoft account").size(11.).color(GREEN));
@@ -451,6 +593,9 @@ impl Launcher {
                             .size(12.)
                             .color(MUTED),
                         );
+                        if ui.button("Change skin").clicked() {
+                            self.edit_skin(account);
+                        }
                     } else {
                         ui.label(RichText::new("Make yourself at home.").size(17.).strong());
                         ui.add_space(8.);
@@ -757,9 +902,11 @@ impl Launcher {
             ui.add_space(10.);
             for account in self.snapshot.accounts.clone() {
                 ui.horizontal(|ui| {
+                    self.profile_avatar(ui, &account, 28.);
                     ui.label(RichText::new(&account.name).strong());
                     if account.selected { badge(ui, "ACTIVE", GREEN); }
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if ui.button("Change skin").clicked() { self.edit_skin(account.clone()); }
                         if ui.add_enabled(!self.busy, egui::Button::new("Sign out")).clicked() { self.start(Action::SignOut(account.uuid.clone())); }
                         if !account.selected && ui.add_enabled(!self.busy, egui::Button::new("Use account")).clicked() { self.start(Action::SelectAccount(account.uuid.clone())); }
                     });
@@ -785,6 +932,9 @@ impl Launcher {
             );
             ui.add_space(10.);
             ui.horizontal(|ui| {
+                if ui.button("Open game folder").clicked() {
+                    self.open(self.game_folder());
+                }
                 if ui.button("Open data folder").clicked() {
                     self.open(self.paths.root.clone());
                 }
@@ -854,6 +1004,156 @@ impl Launcher {
                         }
                     });
                 });
+        }
+    }
+}
+
+impl Launcher {
+    fn game_folder(&self) -> std::path::PathBuf {
+        if self.snapshot.game_home.as_os_str().is_empty() {
+            self.paths.game_home()
+        } else {
+            self.snapshot.game_home.clone()
+        }
+    }
+
+    fn profile_avatar(&self, ui: &mut egui::Ui, account: &Account, size: f32) {
+        if let Some(head) = self.heads.get(&account.uuid) {
+            ui.add(egui::Image::new((head.id(), egui::vec2(size, size))).corner_radius(4.));
+        } else {
+            let (rect, _) = ui.allocate_exact_size(egui::vec2(size, size), egui::Sense::hover());
+            ui.painter().rect_filled(rect, 5., LINE);
+            let initial = account
+                .name
+                .chars()
+                .next()
+                .unwrap_or('?')
+                .to_ascii_uppercase()
+                .to_string();
+            ui.painter().text(
+                rect.center(),
+                egui::Align2::CENTER_CENTER,
+                initial,
+                FontId::proportional(size * 0.5),
+                MUTED,
+            );
+        }
+    }
+
+    fn edit_skin(&mut self, account: Account) {
+        if self.skin_editor.is_some() {
+            return;
+        }
+        let model = if account
+            .skin
+            .as_ref()
+            .is_some_and(|(_, model)| model == "slim")
+        {
+            SkinModel::Slim
+        } else {
+            SkinModel::Classic
+        };
+        self.skin_editor = Some(SkinEditor {
+            account,
+            model,
+            skin: None,
+            preview: None,
+            choosing: false,
+            uploading: false,
+        });
+    }
+
+    fn skin_dialog(&mut self, ctx: &egui::Context) {
+        let Some(mut editor) = self.skin_editor.take() else {
+            return;
+        };
+        let mut open = true;
+        egui::Window::new("Change Minecraft skin")
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0., 0.])
+            .default_width(390.)
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    if let Some(preview) = &editor.preview {
+                        ui.add(
+                            egui::Image::new((preview.id(), egui::vec2(64., 64.)))
+                                .corner_radius(5.),
+                        );
+                    } else {
+                        self.profile_avatar(ui, &editor.account, 64.);
+                    }
+                    ui.vertical(|ui| {
+                        ui.label(RichText::new(&editor.account.name).size(18.).strong());
+                        ui.label(RichText::new("Minecraft: Java Edition").color(MUTED));
+                    });
+                });
+                ui.add_space(12.);
+                ui.label(
+                    "Choose a 64×64 or 64×32 PNG skin. Applying it updates this Minecraft account.",
+                );
+                ui.add_space(8.);
+                if ui
+                    .add_enabled(
+                        !editor.choosing && !editor.uploading,
+                        egui::Button::new("Choose skin PNG…"),
+                    )
+                    .clicked()
+                {
+                    match self.profiles.send(ProfileCommand::Choose {
+                        uuid: editor.account.uuid.clone(),
+                    }) {
+                        Ok(()) => editor.choosing = true,
+                        Err(error) => self.error = Some(error.to_string()),
+                    }
+                }
+                if let Some(skin) = &editor.skin {
+                    ui.label(RichText::new(&skin.name).color(GREEN));
+                }
+                if editor.choosing {
+                    ui.label("Waiting for file selection…");
+                }
+                ui.add_enabled_ui(!editor.uploading, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.radio_value(
+                            &mut editor.model,
+                            SkinModel::Classic,
+                            "Classic (wide arms)",
+                        );
+                        ui.radio_value(&mut editor.model, SkinModel::Slim, "Slim arms");
+                    });
+                });
+                ui.add_space(12.);
+                if primary(
+                    ui,
+                    if editor.uploading {
+                        "Applying skin…"
+                    } else {
+                        "Apply skin"
+                    },
+                    editor.skin.is_some() && !editor.uploading && !editor.choosing,
+                )
+                .clicked()
+                    && let Some(skin) = editor.skin.clone()
+                {
+                    match self.profiles.send(ProfileCommand::Upload {
+                        account: editor.account.clone(),
+                        model: editor.model,
+                        skin,
+                    }) {
+                        Ok(()) => editor.uploading = true,
+                        Err(error) => self.error = Some(error.to_string()),
+                    }
+                }
+                ui.label(
+                    RichText::new("Your new skin appears in new game sessions.")
+                        .size(11.)
+                        .color(MUTED),
+                );
+            });
+        if open {
+            self.skin_editor = Some(editor);
         }
     }
 }
@@ -949,14 +1249,6 @@ impl eframe::App for Launcher {
                         });
                     ui.add_space(12.);
                 }
-                if let Some(progress) = self.progress {
-                    ui.add(
-                        egui::ProgressBar::new(progress)
-                            .fill(ACCENT)
-                            .show_percentage(),
-                    );
-                    ui.add_space(8.);
-                }
                 egui::ScrollArea::vertical()
                     .id_salt(match self.page {
                         Page::Play => "play",
@@ -973,6 +1265,7 @@ impl eframe::App for Launcher {
                     });
             });
         self.dialogs(ctx);
+        self.skin_dialog(ctx);
     }
 }
 
@@ -1039,28 +1332,6 @@ fn badge(ui: &mut egui::Ui, text: &str, color: Color32) {
 fn dot(ui: &mut egui::Ui, color: Color32) {
     let (rect, _) = ui.allocate_exact_size(egui::vec2(10., 12.), egui::Sense::hover());
     ui.painter().circle_filled(rect.center(), 3., color);
-}
-
-fn avatar(painter: &egui::Painter, rect: egui::Rect) {
-    painter.rect_filled(rect, 6., Color32::from_rgb(80, 104, 82));
-    let base = rect.min + egui::vec2(8., 8.);
-    painter.rect_filled(
-        egui::Rect::from_min_size(base, egui::vec2(24., 23.)),
-        0.,
-        Color32::from_rgb(180, 139, 108),
-    );
-    painter.rect_filled(
-        egui::Rect::from_min_size(base, egui::vec2(24., 7.)),
-        0.,
-        Color32::from_rgb(65, 54, 42),
-    );
-    for x in [4., 16.] {
-        painter.rect_filled(
-            egui::Rect::from_min_size(base + egui::vec2(x, 11.), egui::vec2(4., 4.)),
-            0.,
-            Color32::from_rgb(36, 47, 48),
-        );
-    }
 }
 
 fn cube(p: &egui::Painter, center: egui::Pos2, size: f32, color: Color32) {

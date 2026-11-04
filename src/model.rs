@@ -147,6 +147,7 @@ pub struct Snapshot {
     pub selected_version: Option<String>,
     pub mods: Vec<Mod>,
     pub native_build: bool,
+    pub game_home: PathBuf,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -155,6 +156,8 @@ pub struct Account {
     pub uuid: String,
     #[serde(default)]
     pub selected: bool,
+    #[serde(default)]
+    pub skin: Option<(String, String)>,
 }
 
 #[derive(Clone, Debug)]
