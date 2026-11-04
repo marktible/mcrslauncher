@@ -319,9 +319,44 @@ impl Launcher {
     }
 
     fn sidebar(&mut self, ctx: &egui::Context) {
+        if ctx.content_rect().width() < 900. {
+            egui::TopBottomPanel::top("compact_navigation")
+                .frame(
+                    Frame::new()
+                        .fill(PANEL)
+                        .inner_margin(Margin::symmetric(12, 10)),
+                )
+                .show(ctx, |ui| {
+                    ui.spacing_mut().item_spacing.x = 5.;
+                    ui.horizontal_wrapped(|ui| {
+                        let (rect, _) =
+                            ui.allocate_exact_size(egui::vec2(26., 30.), egui::Sense::hover());
+                        cube(
+                            ui.painter(),
+                            rect.center() - egui::vec2(0., 5.),
+                            10.,
+                            ACCENT,
+                        );
+                        ui.label(RichText::new("MCRS").size(19.).strong());
+                        ui.add_space(8.);
+                        for (page, label) in [
+                            (Page::Play, "Play"),
+                            (Page::Mods, "Mods"),
+                            (Page::Updates, "Updates"),
+                            (Page::Settings, "Settings"),
+                        ] {
+                            if ui.selectable_label(self.page == page, label).clicked() {
+                                self.page = page;
+                            }
+                        }
+                    });
+                });
+            return;
+        }
         egui::SidePanel::left("navigation")
-            .exact_width(202.)
-            .resizable(false)
+            .default_width(202.)
+            .width_range(160. ..=260.)
+            .resizable(true)
             .frame(
                 Frame::new()
                     .fill(PANEL)
@@ -329,6 +364,7 @@ impl Launcher {
                     .stroke(Stroke::new(1_f32, LINE)),
             )
             .show(ctx, |ui| {
+                let short = ui.available_height() < 540.;
                 ui.horizontal(|ui| {
                     let (r, _) = ui.allocate_exact_size(Vec2::splat(30.), egui::Sense::hover());
                     cube(ui.painter(), r.center() - egui::vec2(0., 4.), 13., ACCENT);
@@ -336,8 +372,10 @@ impl Launcher {
                 });
                 ui.add_space(3.);
                 ui.label(RichText::new("THE HORIZON LAUNCHER").size(9.).color(MUTED));
-                ui.add_space(39.);
-                ui.label(RichText::new("YOUR WORKSPACE").size(10.).color(MUTED));
+                ui.add_space(if short { 12. } else { 39. });
+                if !short {
+                    ui.label(RichText::new("YOUR WORKSPACE").size(10.).color(MUTED));
+                }
                 ui.add_space(12.);
                 for (page, title, sub) in [
                     (Page::Play, "Play", "01"),
@@ -357,34 +395,38 @@ impl Launcher {
                         Color32::TRANSPARENT
                     })
                     .corner_radius(6.)
-                    .min_size(egui::vec2(162., 43.));
+                    .min_size(egui::vec2(ui.available_width(), 43.));
                     if ui.add(button).clicked() {
                         self.page = page;
                     }
                     ui.add_space(4.);
                 }
-                ui.with_layout(Layout::bottom_up(Align::LEFT), |ui| {
-                    ui.label(
-                        RichText::new(concat!("MCRS v", env!("CARGO_PKG_VERSION")))
-                            .size(11.)
-                            .color(MUTED),
-                    );
-                    ui.add_space(8.);
-                    if ui
-                        .link(RichText::new("Horizon on GitHub >").size(12.).color(MUTED))
-                        .clicked()
-                    {
-                        self.open(github::REPOSITORY);
-                    }
-                    ui.add_space(20.);
-                    ui.separator();
-                    ui.add_space(12.);
-                    ui.label(
-                        RichText::new("Built in Rust.\nMade for your next world.")
-                            .size(12.)
-                            .color(MUTED),
-                    );
-                });
+                if ui.available_height() >= if short { 64. } else { 150. } {
+                    ui.with_layout(Layout::bottom_up(Align::LEFT), |ui| {
+                        ui.label(
+                            RichText::new(concat!("MCRS v", env!("CARGO_PKG_VERSION")))
+                                .size(11.)
+                                .color(MUTED),
+                        );
+                        ui.add_space(8.);
+                        if ui
+                            .link(RichText::new("Horizon on GitHub >").size(12.).color(MUTED))
+                            .clicked()
+                        {
+                            self.open(github::REPOSITORY);
+                        }
+                        if !short {
+                            ui.add_space(20.);
+                            ui.separator();
+                            ui.add_space(12.);
+                            ui.label(
+                                RichText::new("Built in Rust.\nMade for your next world.")
+                                    .size(12.)
+                                    .color(MUTED),
+                            );
+                        }
+                    });
+                }
             });
     }
 
@@ -409,7 +451,7 @@ impl Launcher {
                         "Ready for your next adventure"
                     };
                     ui.add_sized(
-                        [ui.available_width() - 190., 18.],
+                        [(ui.available_width() - 190.).max(0.), 18.],
                         egui::Label::new(RichText::new(text).size(11.).color(MUTED)).truncate(),
                     );
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -497,183 +539,53 @@ impl Launcher {
     }
 
     fn play(&mut self, ui: &mut egui::Ui) {
-        landscape(ui);
-        ui.add_space(24.);
-        ui.horizontal(|ui| {
+        if ui.ctx().content_rect().height() >= 560. {
+            landscape(ui);
+            ui.add_space(20.);
+        }
+        ui.horizontal_wrapped(|ui| {
             ui.label(RichText::new("Your next adventure").size(22.).strong());
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if ui.button("Open game folder").clicked() {
-                    self.open(self.game_folder());
-                }
-                badge(ui, "NATIVE RUST", GREEN);
-            });
+            if ui.button("Open game folder").clicked() {
+                self.open(self.game_folder());
+            }
+            badge(ui, "NATIVE RUST", GREEN);
         });
         ui.add_space(15.);
         let width = ui.available_width();
-        ui.horizontal_top(|ui| {
-            card().show(ui, |ui| {
-                ui.vertical(|ui| {
-                    ui.set_width(((width - 13.) * 0.59 - 38.).max(260.));
-                    ui.horizontal(|ui| {
-                        badge(ui, self.settings.channel.label(), ACCENT);
-                        if self.snapshot.native_build {
-                            badge(ui, "MODDED", GREEN);
-                        }
-                    });
-                    ui.add_space(16.);
-                    ui.label(RichText::new("Minecraft. Reimagined.").size(22.).strong());
-                    ui.add_space(6.);
-                    ui.label(
-                        RichText::new("The world you know, powered by Horizon's Rust engine.")
-                            .size(13.)
-                            .color(MUTED),
-                    );
-                    ui.add_space(18.);
-                    ui.separator();
-                    ui.add_space(10.);
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new("INSTALLED VERSION").size(10.).color(MUTED));
-                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            ui.label(
-                                RichText::new(
-                                    self.snapshot
-                                        .selected_version
-                                        .as_deref()
-                                        .unwrap_or("Not installed"),
-                                )
-                                .size(12.),
-                            );
-                        });
-                    });
-                    ui.add_space(14.);
-                    let (label, action) = if !self.engine_ready() {
-                        ("Set up Horizon", Action::Setup)
-                    } else if !self.snapshot.owner {
-                        ("Sign in to Minecraft", Action::SignIn)
-                    } else {
-                        (
-                            if self.receipt.mods_dirty {
-                                "Build & play  >"
-                            } else {
-                                "Play Horizon  >"
-                            },
-                            Action::Play,
-                        )
-                    };
-                    if primary(ui, label, !self.busy).clicked() {
-                        self.start(action);
-                    }
-                    ui.add_space(7.);
-                    ui.label(
-                        RichText::new(if self.settings.update_before_play {
-                            "Checks for updates; uses the prepared installed build if unavailable"
-                        } else {
-                            "Using your locally installed game build"
-                        })
-                        .size(10.)
-                        .color(MUTED),
-                    );
-                });
+        if width >= 660. {
+            ui.horizontal_top(|ui| {
+                ui.spacing_mut().item_spacing.x = 14.;
+                self.game_card(ui, (width - 14.) * 0.59);
+                self.account_card(ui, (width - 14.) * 0.41);
             });
-            ui.add_space(4.);
-            card().show(ui, |ui| {
-                ui.vertical(|ui| {
-                    ui.set_width(((width - 13.) * 0.41 - 38.).max(180.));
-                    ui.label(RichText::new("MINECRAFT ACCOUNT").size(10.).color(MUTED));
-                    ui.add_space(17.);
-                    if let Some(account) = self
-                        .snapshot
-                        .accounts
-                        .iter()
-                        .find(|a| a.selected)
-                        .or(self.snapshot.accounts.first())
-                        .cloned()
-                    {
-                        ui.horizontal(|ui| {
-                            self.profile_avatar(ui, &account, 40.);
-                            ui.vertical(|ui| {
-                                ui.label(RichText::new(&account.name).size(17.).strong());
-                                ui.label(RichText::new("Microsoft account").size(11.).color(GREEN));
-                            });
-                        });
-                        ui.add_space(18.);
-                        ui.label(
-                            RichText::new(if self.snapshot.owner {
-                                "Java Edition ownership verified."
-                            } else {
-                                "Sign in again to verify game ownership."
-                            })
-                            .size(12.)
-                            .color(MUTED),
-                        );
-                        if ui.button("Change skin").clicked() {
-                            self.edit_skin(account);
-                        }
-                    } else {
-                        ui.label(RichText::new("Make yourself at home.").size(17.).strong());
-                        ui.add_space(8.);
-                        ui.label(
-                            RichText::new(
-                                "Connect the Microsoft account that owns Minecraft: Java Edition.",
-                            )
-                            .size(12.)
-                            .color(MUTED),
-                        );
-                        ui.add_space(14.);
-                        if ui
-                            .add_enabled(
-                                !self.busy,
-                                egui::Button::new("Sign in with Microsoft")
-                                    .min_size(egui::vec2(180., 36.)),
-                            )
-                            .clicked()
-                        {
-                            self.start(Action::SignIn);
-                        }
-                    }
-                    ui.add_space(18.);
-                    ui.separator();
-                    ui.add_space(9.);
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new(format!("{} native mods", self.snapshot.mods.len()))
-                                .size(12.)
-                                .color(MUTED),
-                        );
-                        if ui.link("Manage >").clicked() {
-                            self.page = Page::Mods;
-                        }
-                    });
-                });
-            });
-        });
+        } else {
+            self.game_card(ui, width);
+            ui.add_space(14.);
+            self.account_card(ui, width);
+        }
         ui.add_space(19.);
         card().show(ui, |ui| {
             ui.set_width(ui.available_width());
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 dot(ui, if self.has_update() { ACCENT } else { GREEN });
-                ui.vertical(|ui| {
-                    ui.label(
-                        RichText::new(if self.has_update() {
-                            "A new horizon is waiting"
-                        } else {
-                            "Always looking ahead"
-                        })
-                        .size(13.)
-                        .strong(),
-                    );
-                    ui.label(
-                        RichText::new("Follow the latest Horizon builds and release notes.")
-                            .size(11.)
-                            .color(MUTED),
-                    );
-                });
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if ui.button("View updates >").clicked() {
-                        self.page = Page::Updates;
-                    }
-                });
+                ui.label(
+                    RichText::new(if self.has_update() {
+                        "A new horizon is waiting"
+                    } else {
+                        "Always looking ahead"
+                    })
+                    .size(13.)
+                    .strong(),
+                );
+                if ui.button("View updates >").clicked() {
+                    self.page = Page::Updates;
+                }
             });
+            ui.label(
+                RichText::new("Follow the latest Horizon builds and release notes.")
+                    .size(11.)
+                    .color(MUTED),
+            );
         });
         ui.add_space(14.);
         ui.label(
@@ -681,6 +593,165 @@ impl Launcher {
                 .size(10.)
                 .color(MUTED),
         );
+    }
+
+    fn game_card(&mut self, ui: &mut egui::Ui, width: f32) {
+        card().show(ui, |ui| {
+            ui.vertical(|ui| {
+                ui.set_width((width - card().total_margin().sum().x).max(0.));
+                ui.horizontal_wrapped(|ui| {
+                    badge(ui, self.settings.channel.label(), ACCENT);
+                    if self.snapshot.native_build {
+                        badge(ui, "MODDED", GREEN);
+                    }
+                });
+                if ui.ctx().content_rect().height() < 560. {
+                    ui.add_space(8.);
+                    self.play_button(ui);
+                    ui.label(
+                        RichText::new(
+                            self.snapshot
+                                .selected_version
+                                .as_deref()
+                                .unwrap_or("Not installed"),
+                        )
+                        .size(11.)
+                        .color(MUTED),
+                    );
+                    return;
+                }
+                ui.add_space(16.);
+                ui.label(RichText::new("Minecraft. Reimagined.").size(22.).strong());
+                ui.add_space(6.);
+                ui.label(
+                    RichText::new("The world you know, powered by Horizon's Rust engine.")
+                        .size(13.)
+                        .color(MUTED),
+                );
+                ui.add_space(18.);
+                ui.separator();
+                ui.add_space(10.);
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("INSTALLED VERSION").size(10.).color(MUTED));
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        ui.label(
+                            RichText::new(
+                                self.snapshot
+                                    .selected_version
+                                    .as_deref()
+                                    .unwrap_or("Not installed"),
+                            )
+                            .size(12.),
+                        );
+                    });
+                });
+                ui.add_space(14.);
+                self.play_button(ui);
+                ui.add_space(7.);
+                ui.label(
+                    RichText::new(if self.settings.update_before_play {
+                        "Checks for updates; uses the prepared installed build if unavailable"
+                    } else {
+                        "Using your locally installed game build"
+                    })
+                    .size(10.)
+                    .color(MUTED),
+                );
+            });
+        });
+    }
+
+    fn play_button(&mut self, ui: &mut egui::Ui) {
+        let (label, action) = if !self.engine_ready() {
+            ("Set up Horizon", Action::Setup)
+        } else if !self.snapshot.owner {
+            ("Sign in to Minecraft", Action::SignIn)
+        } else {
+            (
+                if self.receipt.mods_dirty {
+                    "Build & play  >"
+                } else {
+                    "Play Horizon  >"
+                },
+                Action::Play,
+            )
+        };
+        if primary(ui, label, !self.busy).clicked() {
+            self.start(action);
+        }
+    }
+
+    fn account_card(&mut self, ui: &mut egui::Ui, width: f32) {
+        card().show(ui, |ui| {
+            ui.vertical(|ui| {
+                ui.set_width((width - card().total_margin().sum().x).max(0.));
+                ui.label(RichText::new("MINECRAFT ACCOUNT").size(10.).color(MUTED));
+                ui.add_space(17.);
+                if let Some(account) = self
+                    .snapshot
+                    .accounts
+                    .iter()
+                    .find(|a| a.selected)
+                    .or(self.snapshot.accounts.first())
+                    .cloned()
+                {
+                    ui.horizontal(|ui| {
+                        self.profile_avatar(ui, &account, 40.);
+                        ui.vertical(|ui| {
+                            ui.label(RichText::new(&account.name).size(17.).strong());
+                            ui.label(RichText::new("Microsoft account").size(11.).color(GREEN));
+                        });
+                    });
+                    ui.add_space(18.);
+                    ui.label(
+                        RichText::new(if self.snapshot.owner {
+                            "Java Edition ownership verified."
+                        } else {
+                            "Sign in again to verify game ownership."
+                        })
+                        .size(12.)
+                        .color(MUTED),
+                    );
+                    if ui.button("Change skin").clicked() {
+                        self.edit_skin(account);
+                    }
+                } else {
+                    ui.label(RichText::new("Make yourself at home.").size(17.).strong());
+                    ui.add_space(8.);
+                    ui.label(
+                        RichText::new(
+                            "Connect the Microsoft account that owns Minecraft: Java Edition.",
+                        )
+                        .size(12.)
+                        .color(MUTED),
+                    );
+                    ui.add_space(14.);
+                    if ui
+                        .add_enabled(
+                            !self.busy,
+                            egui::Button::new("Sign in with Microsoft")
+                                .min_size(egui::vec2(180., 36.)),
+                        )
+                        .clicked()
+                    {
+                        self.start(Action::SignIn);
+                    }
+                }
+                ui.add_space(18.);
+                ui.separator();
+                ui.add_space(9.);
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(
+                        RichText::new(format!("{} native mods", self.snapshot.mods.len()))
+                            .size(12.)
+                            .color(MUTED),
+                    );
+                    if ui.link("Manage >").clicked() {
+                        self.page = Page::Mods;
+                    }
+                });
+            });
+        });
     }
 
     fn mods(&mut self, ui: &mut egui::Ui) {
@@ -716,13 +787,13 @@ impl Launcher {
                     .color(ACCENT),
             );
         }
-        ui.horizontal(|ui| {
+        ui.vertical(|ui| {
             ui.label(
                 RichText::new(format!("Installed mods ({})", self.snapshot.mods.len()))
                     .size(18.)
                     .strong(),
             );
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            ui.horizontal_wrapped(|ui| {
                 if ui
                     .add_enabled(
                         !self.busy && !self.snapshot.mods.is_empty(),
@@ -778,7 +849,9 @@ impl Launcher {
             card().show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 ui.horizontal(|ui| {
+                    let details_width = (ui.available_width() - 160.).max(180.);
                     ui.vertical(|ui| {
+                        ui.set_max_width(details_width);
                         ui.label(RichText::new(&item.id).size(16.).strong());
                         ui.label(
                             RichText::new(format!("{} · {}", item.repository, item.version))
@@ -786,7 +859,7 @@ impl Launcher {
                                 .color(MUTED),
                         );
                     });
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    ui.horizontal_wrapped(|ui| {
                         if ui
                             .add_enabled(!self.busy, egui::Button::new("Remove"))
                             .clicked()
@@ -814,7 +887,7 @@ impl Launcher {
         ui.add_space(22.);
         card().show(ui, |ui| {
             ui.set_width(ui.available_width());
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 ui.label(RichText::new("Release channel").size(16.).strong());
                 let before = self.settings.channel;
                 egui::ComboBox::from_id_salt("update_channel").selected_text(self.settings.channel.label()).show_ui(ui, |ui| {
@@ -826,9 +899,7 @@ impl Launcher {
                     self.save();
                     self.pending_check = true;
                 }
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if ui.add_enabled(!self.busy, egui::Button::new("Check now")).clicked() { self.start(Action::CheckUpdates); }
-                });
+                if ui.add_enabled(!self.busy, egui::Button::new("Check now")).clicked() { self.start(Action::CheckUpdates); }
             });
             ui.add_space(10.);
             ui.label(RichText::new("Nightly follows the newest published Horizon build. Minecraft assets match the version required by that build.").size(12.).color(MUTED));
@@ -901,7 +972,7 @@ impl Launcher {
             ui.checkbox(&mut self.settings.auto_check, "Check for updates at startup and every 15 minutes");
             ui.checkbox(&mut self.settings.update_before_play, "Install the newest build before playing");
             ui.add_space(12.);
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 ui.label("Native mod build profile");
                 egui::ComboBox::from_id_salt("build_profile").selected_text(self.settings.build_profile.argument()).show_ui(ui, |ui| {
                     ui.selectable_value(&mut self.settings.build_profile, BuildProfile::Performance, "Performance · fast incremental rebuilds");
@@ -925,7 +996,7 @@ impl Launcher {
                     self.profile_avatar(ui, &account, 28.);
                     ui.label(RichText::new(&account.name).strong());
                     if account.selected { badge(ui, "ACTIVE", GREEN); }
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    ui.horizontal_wrapped(|ui| {
                         if ui.button("Change skin").clicked() { self.edit_skin(account.clone()); }
                         if ui.add_enabled(!self.busy, egui::Button::new("Sign out")).clicked() { self.start(Action::SignOut(account.uuid.clone())); }
                         if !account.selected && ui.add_enabled(!self.busy, egui::Button::new("Use account")).clicked() { self.start(Action::SelectAccount(account.uuid.clone())); }
@@ -951,7 +1022,7 @@ impl Launcher {
                     .color(MUTED),
             );
             ui.add_space(10.);
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 if ui.button("Open game folder").clicked() {
                     self.open(self.game_folder());
                 }
@@ -981,9 +1052,13 @@ impl Launcher {
         if let Some((url, code)) = self.login.clone() {
             egui::Window::new("Connect your Minecraft account")
                 .collapsible(false)
-                .resizable(false)
+                .resizable(true)
                 .anchor(egui::Align2::CENTER_CENTER, [0., 0.])
                 .default_width(390.)
+                .min_width(260.)
+                .max_width((ctx.content_rect().width() - 32.).max(260.))
+                .max_height((ctx.content_rect().height() - 32.).max(180.))
+                .vscroll(true)
                 .show(ctx, |ui| {
                     ui.add_space(8.);
                     ui.label("Your browser is ready. Enter this code at Microsoft to sign in:");
@@ -1010,13 +1085,15 @@ impl Launcher {
                 });
         }
         if self.confirm.is_some() {
-            egui::Window::new("Native mod changes").collapsible(false).resizable(false)
-                .anchor(egui::Align2::CENTER_CENTER, [0., 0.]).default_width(390.).show(ctx, |ui| {
+            egui::Window::new("Native mod changes").collapsible(false).resizable(true)
+                .anchor(egui::Align2::CENTER_CENTER, [0., 0.]).default_width(390.)
+                .min_width(260.).max_width((ctx.content_rect().width() - 32.).max(260.))
+                .max_height((ctx.content_rect().height() - 32.).max(180.)).vscroll(true).show(ctx, |ui| {
                     let removing = matches!(self.confirm, Some(Confirm::Remove(_)));
                     ui.label(if removing { "Remove this mod and rebuild the game with the remaining mods?" }
                         else { "Updating imports new source code from GitHub. Review the changes before trusting them to run on your computer." });
                     ui.add_space(12.);
-                    ui.horizontal(|ui| {
+                    ui.horizontal_wrapped(|ui| {
                         if ui.button("Cancel").clicked() { self.confirm = None; }
                         if ui.add(egui::Button::new(if removing { "Remove & rebuild" } else { "Trust, update & build" }).fill(ACCENT)).clicked()
                             && let Some(confirm) = self.confirm.take() {
@@ -1091,9 +1168,13 @@ impl Launcher {
         egui::Window::new("Change Minecraft skin")
             .open(&mut open)
             .collapsible(false)
-            .resizable(false)
+            .resizable(true)
             .anchor(egui::Align2::CENTER_CENTER, [0., 0.])
             .default_width(390.)
+            .min_width(260.)
+            .max_width((ctx.content_rect().width() - 32.).max(260.))
+            .max_height((ctx.content_rect().height() - 32.).max(180.))
+            .vscroll(true)
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     if let Some(preview) = &editor.preview {
@@ -1135,7 +1216,7 @@ impl Launcher {
                     ui.label("Waiting for file selection…");
                 }
                 ui.add_enabled_ui(!editor.uploading, |ui| {
-                    ui.horizontal(|ui| {
+                    ui.horizontal_wrapped(|ui| {
                         ui.radio_value(
                             &mut editor.model,
                             SkinModel::Classic,
@@ -1197,6 +1278,7 @@ impl eframe::App for Launcher {
             egui::TopBottomPanel::bottom("activity")
                 .default_height(150.)
                 .min_height(70.)
+                .max_height((ctx.content_rect().height() * 0.35).max(70.))
                 .resizable(true)
                 .frame(
                     Frame::new()
@@ -1226,7 +1308,11 @@ impl eframe::App for Launcher {
             .frame(
                 Frame::new()
                     .fill(BG)
-                    .inner_margin(Margin::symmetric(30, 24)),
+                    .inner_margin(if ctx.content_rect().width() < 900. {
+                        Margin::symmetric(16, 16)
+                    } else {
+                        Margin::symmetric(30, 24)
+                    }),
             )
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
@@ -1246,29 +1332,6 @@ impl eframe::App for Launcher {
                     });
                 });
                 ui.add_space(20.);
-                if let Some(error) = self.error.clone() {
-                    Frame::new()
-                        .fill(Color32::from_rgb(63, 36, 32))
-                        .inner_margin(12)
-                        .corner_radius(6)
-                        .show(ui, |ui| {
-                            ui.set_width(ui.available_width());
-                            ui.horizontal_top(|ui| {
-                                ui.add(
-                                    egui::Label::new(
-                                        RichText::new(error)
-                                            .size(12.)
-                                            .color(Color32::from_rgb(247, 177, 154)),
-                                    )
-                                    .wrap(),
-                                );
-                                if ui.small_button("Dismiss").clicked() {
-                                    self.error = None;
-                                }
-                            });
-                        });
-                    ui.add_space(12.);
-                }
                 egui::ScrollArea::vertical()
                     .id_salt(match self.page {
                         Page::Play => "play",
@@ -1277,11 +1340,36 @@ impl eframe::App for Launcher {
                         Page::Settings => "settings",
                     })
                     .auto_shrink([false; 2])
-                    .show(ui, |ui| match self.page {
-                        Page::Play => self.play(ui),
-                        Page::Mods => self.mods(ui),
-                        Page::Updates => self.updates(ui),
-                        Page::Settings => self.settings(ui),
+                    .show(ui, |ui| {
+                        if let Some(error) = self.error.clone() {
+                            Frame::new()
+                                .fill(Color32::from_rgb(63, 36, 32))
+                                .inner_margin(12)
+                                .corner_radius(6)
+                                .show(ui, |ui| {
+                                    ui.set_width(ui.available_width());
+                                    ui.vertical(|ui| {
+                                        ui.add(
+                                            egui::Label::new(
+                                                RichText::new(error)
+                                                    .size(12.)
+                                                    .color(Color32::from_rgb(247, 177, 154)),
+                                            )
+                                            .wrap(),
+                                        );
+                                        if ui.small_button("Dismiss").clicked() {
+                                            self.error = None;
+                                        }
+                                    });
+                                });
+                            ui.add_space(12.);
+                        }
+                        match self.page {
+                            Page::Play => self.play(ui),
+                            Page::Mods => self.mods(ui),
+                            Page::Updates => self.updates(ui),
+                            Page::Settings => self.settings(ui),
+                        }
                     });
             });
         self.dialogs(ctx);
@@ -1306,6 +1394,7 @@ fn configure(ctx: &egui::Context) {
     visuals.widgets.hovered.bg_stroke = Stroke::new(1_f32, ACCENT);
     ctx.set_visuals(visuals);
     ctx.style_mut(|s| {
+        s.wrap_mode = Some(egui::TextWrapMode::Wrap);
         s.spacing.item_spacing = egui::vec2(9., 9.);
         s.spacing.button_padding = egui::vec2(12., 8.);
         s.text_styles
@@ -1379,8 +1468,12 @@ fn cube(p: &egui::Painter, center: egui::Pos2, size: f32, color: Color32) {
 
 /// Static vector art is drawn by the native renderer: no images to decode, no animation loop.
 fn landscape(ui: &mut egui::Ui) {
-    let (rect, _) =
-        ui.allocate_exact_size(egui::vec2(ui.available_width(), 208.), egui::Sense::hover());
+    let compact = ui.available_width() < 600. || ui.ctx().content_rect().height() < 600.;
+    let height = if compact { 152. } else { 208. };
+    let (rect, _) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), height),
+        egui::Sense::hover(),
+    );
     let p = ui.painter().with_clip_rect(rect);
     p.rect_filled(rect, CornerRadius::same(9), Color32::from_rgb(38, 54, 48));
     let origin = rect.right_top() + egui::vec2(-150., 58.);
@@ -1438,21 +1531,21 @@ fn landscape(ui: &mut egui::Ui) {
     );
     let x = rect.left() + 27.;
     p.text(
-        egui::pos2(x, rect.top() + 28.),
+        egui::pos2(x, rect.top() + if compact { 18. } else { 28. }),
         egui::Align2::LEFT_TOP,
         "SAME WORLD. NEW POSSIBILITIES.",
         FontId::proportional(9.),
         GREEN,
     );
     p.text(
-        egui::pos2(x, rect.top() + 57.),
+        egui::pos2(x, rect.top() + if compact { 40. } else { 57. }),
         egui::Align2::LEFT_TOP,
         "A familiar world.\nA new horizon.",
-        FontId::proportional(32.),
+        FontId::proportional(if compact { 26. } else { 32. }),
         TEXT,
     );
     p.text(
-        egui::pos2(x, rect.bottom() - 31.),
+        egui::pos2(x, rect.bottom() - if compact { 26. } else { 31. }),
         egui::Align2::LEFT_TOP,
         "Your Minecraft journey, in Rust.",
         FontId::proportional(12.),

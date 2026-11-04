@@ -79,3 +79,11 @@ Failed update checks emit an informational update-unavailable state and retain e
 All 43 tests pass, including local HTTP tests for recovery from 503, rejection of invalid/rate-limited responses and retry cancellation, plus worker tests for actual Play dispatch after a failed catalog query. Negative cases cover ownership, missing resources, pending mod changes, corrupted engines, cancellation and explicit-install failure. Formatting, Clippy and the Flatpak source-lock check pass.
 
 The live GitHub releases endpoint returned HTTP 200 after the reported outage. Visually verified the real 0.2.4 Updates page with a deliberately refused proxy connection in an isolated, credential-free fixture: it showed the informational warning, installed version and retry button without a fatal banner. Rebuilt and installed the 0.2.4 Flatpak and confirmed its installed command reports 0.2.4. The user's existing launcher and release-profile native compilation were left running; the new interface and behavior apply on the next launcher start.
+
+## Version 0.2.5: resizable desktop layout
+
+Reduced the window minimum from 940×640 to 480×360. Narrow windows use a compact top navigation bar, smaller margins and stacked Play cards; wide windows use an adjustable sidebar and two columns when space permits. Mod, account, update and storage actions wrap to fit. Short Play windows prioritize the launch button over the decorative landscape. Long error messages scroll with page content, the activity drawer is height-limited, and account/skin/confirmation dialogs support resizing and vertical scrolling within the viewport.
+
+All 43 existing tests pass; formatting, Clippy and the Flatpak source-lock check pass. Visually checked all four real desktop pages at 480 pixels wide with isolated account/mod metadata, including a long player name and native version. Also checked Play at 700×700, 1140×780 and 1140×360, and Mods at 480×360. The resize checks caught and resolved inherited horizontal card layout and overlapping sidebar footer text before packaging.
+
+Confirmed the final Play layout keeps its launch button visible at 480×360 and 1140×360. Rebuilt and installed the 0.2.5 Flatpak, verified the bundle checksum and runtime dependencies, and confirmed its installed command reports 0.2.5.

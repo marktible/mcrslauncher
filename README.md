@@ -27,6 +27,8 @@ Preparation retries temporary DNS, connection and server-availability failures u
 
 GitHub update checks also retry temporary network failures. If a check stays unavailable, the Updates page shows that status and retains any last-known release details without claiming they are current. Play can continue with a verified, prepared installed build when there are no pending mod changes; Horizon still checks the Minecraft account. Explicit installation requests require a successful update check.
 
+The desktop window resizes down to 480×360. Narrow windows use compact top navigation and stacked Play cards; action rows wrap, content scrolls, and dialogs can be resized. Wide windows keep the sidebar, whose width can also be adjusted.
+
 Use `--page mods`, `--page updates`, or `--page settings` to open a page directly. Ctrl+1 through Ctrl+4 switch pages inside the app.
 
 ## Features

@@ -22,7 +22,8 @@ fn main() -> eframe::Result {
             .with_app_id(std::env::var("FLATPAK_ID").unwrap_or_else(|_| "mcrslauncher".into()))
             .with_icon(icon())
             .with_inner_size([1140., 780.])
-            .with_min_inner_size([940., 640.]),
+            .with_min_inner_size([480., 360.])
+            .with_resizable(true),
         renderer: eframe::Renderer::Glow,
         vsync: true,
         ..Default::default()

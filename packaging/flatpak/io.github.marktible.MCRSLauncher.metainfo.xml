@@ -25,6 +25,9 @@
   <url type="bugtracker">https://github.com/marktible/mcrslauncher/issues</url>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.2.5" date="2026-11-04">
+      <description><p>Resize down to 480 by 360 with compact navigation, stacked cards, wrapping controls and resizable dialogs.</p></description>
+    </release>
     <release version="0.2.4" date="2026-11-04">
       <description><p>Retry temporary GitHub failures, show update unavailability without a fatal error, and let Play use a verified prepared build when the update check fails.</p></description>
     </release>
