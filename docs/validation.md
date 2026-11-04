@@ -24,4 +24,4 @@ The application itself does not improve game FPS. The performance and release pr
 
 ## GitHub repository
 
-The source is prepared as a local Git repository. Creating and pushing the requested **private** GitHub repository requires an authenticated GitHub connection; none was available during this validation. No public repository was created.
+The source is committed locally and connected over SSH to `marktible/mcrslauncher`. The repository's initial commit and MIT license are preserved. GitHub reported the repository as public when it was connected; the source push is pending a change to private visibility, as requested. SSH access supports pushing commits but cannot change GitHub repository visibility.
