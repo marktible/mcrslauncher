@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=MCRS Launcher
+Comment=A native Rust launcher for Horizon Minecraft
+Exec=mcrslauncher
+Icon=mcrslauncher
+Terminal=false
+Categories=Game;
+Keywords=Minecraft;Horizon;Rust;

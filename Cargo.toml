@@ -1,0 +1,35 @@
+[package]
+name = "mcrslauncher"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "A lightweight native Rust launcher for Horizon"
+license = "MIT"
+
+[dependencies]
+anyhow = "1"
+directories = "6"
+eframe = { version = "0.33", default-features = false, features = ["default_fonts", "glow", "x11", "wayland"] }
+flate2 = "1"
+open = "5"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tar = "0.4"
+tempfile = "3"
+url = "2"
+zip = { version = "4", default-features = false, features = ["deflate"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true
+
+[profile.dev]
+debug = 1
+
