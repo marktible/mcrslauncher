@@ -382,16 +382,98 @@ impl Engine {
                 return Ok(());
             }
         }
-        report(Output::Stage(
-            "Preparing Minecraft resources for your account".into(),
-        ));
-        self.run(
-            &["prepare", "--download", "--version", &version],
+        self.prepare_download(
+            &version,
             report,
-            false,
-        )?;
-        Ok(())
+            &[Duration::from_secs(2), Duration::from_secs(5)],
+        )
     }
+
+    fn prepare_download(
+        &self,
+        version: &str,
+        report: Reporter<'_>,
+        retry_delays: &[Duration],
+    ) -> Result<()> {
+        for attempt in 0..=retry_delays.len() {
+            self.check_cancel()?;
+            report(Output::Stage(if attempt == 0 {
+                "Preparing Minecraft resources for your account".into()
+            } else {
+                format!(
+                    "Resuming Minecraft preparation · attempt {} of {}",
+                    attempt + 1,
+                    retry_delays.len() + 1
+                )
+            }));
+            let error = match self.run(
+                &["prepare", "--download", "--version", version],
+                report,
+                false,
+            ) {
+                Ok(_) => return Ok(()),
+                Err(error) => error,
+            };
+            self.check_cancel()?;
+            if !is_temporary_network_error(&error) {
+                return Err(error);
+            }
+            let Some(delay) = retry_delays.get(attempt) else {
+                return Err(error.context(format!(
+                    "Minecraft setup could not reach its download servers after {} attempts. \
+                     Completed downloads are saved. Check your connection, then press Play to resume.",
+                    retry_delays.len() + 1
+                )));
+            };
+            report(Output::Stage(format!(
+                "Connection interrupted · retrying preparation in {}s",
+                delay.as_secs()
+            )));
+            report(Output::Log(
+                "A temporary network error interrupted preparation. Completed downloads are kept; retrying automatically."
+                    .into(),
+            ));
+            let started = Instant::now();
+            while started.elapsed() < *delay {
+                self.check_cancel()?;
+                thread::sleep(
+                    delay
+                        .saturating_sub(started.elapsed())
+                        .min(Duration::from_millis(80)),
+                );
+            }
+        }
+        unreachable!("preparation returns after the final attempt")
+    }
+}
+
+fn is_temporary_network_error(error: &anyhow::Error) -> bool {
+    let message = format!("{error:#}").to_ascii_lowercase();
+    // The captured tail may contain an earlier, nonfatal sound-download warning. Classify
+    // the CLI's final error rather than letting that warning hide a different fatal cause.
+    let cause = message
+        .rsplit_once("error:")
+        .map_or(message.as_str(), |(_, cause)| cause);
+    // Restrict retries to transport failures. Authentication, checksum, Java compatibility,
+    // certificates and preparer failures need their original error, without another run.
+    [
+        "dns failed:",
+        "temporary failure in name resolution",
+        "failed to lookup address information",
+        "connection reset",
+        "connection aborted",
+        "connection timed out",
+        "operation timed out",
+        "network is unreachable",
+        "http 502",
+        "http 503",
+        "http 504",
+        "status 502",
+        "status 503",
+        "status 504",
+    ]
+    .iter()
+    .any(|marker| cause.contains(marker))
 }
 
 pub fn game_fingerprint(catalog: &Catalog) -> String {
@@ -497,6 +579,103 @@ fn terminate_tree(child: &mut std::process::Child) {
 mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
+
+    fn preparation_engine(script: &str) -> (tempfile::TempDir, Engine) {
+        let directory = tempfile::tempdir().unwrap();
+        let paths = Paths {
+            root: directory.path().to_path_buf(),
+        };
+        paths.create().unwrap();
+        fs::write(paths.engine(), format!("#!/bin/sh\n{script}\n")).unwrap();
+        fs::set_permissions(paths.engine(), fs::Permissions::from_mode(0o755)).unwrap();
+        let engine = Engine::new(paths, Arc::new(AtomicBool::new(false))).unwrap();
+        (directory, engine)
+    }
+
+    #[test]
+    fn preparation_resumes_verified_downloads_after_a_transient_dns_failure() {
+        let (_directory, engine) = preparation_engine(
+            r#"if [ ! -f "$HORIZON_LAUNCHER_HOME/complete-download" ]; then
+    printf cached > "$HORIZON_LAUNCHER_HOME/complete-download"
+    printf 'error: Java 25 is needed; downloading Java failed: Dns Failed: Temporary failure in name resolution\n' >&2
+    exit 1
+fi
+test "$(cat "$HORIZON_LAUNCHER_HOME/complete-download")" = cached || exit 2
+printf '%s\n' "$@" > "$HORIZON_LAUNCHER_HOME/resumed-arguments""#,
+        );
+        let events = Mutex::new(Vec::new());
+        engine
+            .prepare_download(
+                "test",
+                &|event| events.lock().unwrap().push(event),
+                &[Duration::ZERO],
+            )
+            .unwrap();
+        assert_eq!(
+            fs::read_to_string(engine.paths.engine_home().join("resumed-arguments")).unwrap(),
+            "prepare\n--download\n--version\ntest\n"
+        );
+        assert!(events.into_inner().unwrap().iter().any(
+            |event| matches!(event, Output::Stage(stage) if stage.contains("attempt 2 of 2"))
+        ));
+    }
+
+    #[test]
+    fn preparation_stops_retrying_after_the_limit_and_explains_how_to_resume() {
+        let (_directory, engine) = preparation_engine(
+            r#"printf attempt >> "$HORIZON_LAUNCHER_HOME/attempts"
+printf 'error: Dns Failed: Temporary failure in name resolution\n' >&2
+exit 1"#,
+        );
+        let error = engine
+            .prepare_download("test", &|_| {}, &[Duration::ZERO; 2])
+            .unwrap_err();
+        assert_eq!(
+            fs::read_to_string(engine.paths.engine_home().join("attempts")).unwrap(),
+            "attemptattemptattempt"
+        );
+        assert!(error.to_string().contains("after 3 attempts"));
+        assert!(error.to_string().contains("Completed downloads are saved"));
+    }
+
+    #[test]
+    fn preparation_does_not_retry_permanent_failures_or_earlier_network_warnings() {
+        let (_directory, engine) = preparation_engine(
+            r#"printf attempt >> "$HORIZON_LAUNCHER_HOME/attempts"
+printf 'The sounds could not all be downloaded: Dns Failed: Temporary failure in name resolution\n' >&2
+printf 'error: Minecraft server jar checksum mismatch\n' >&2
+exit 1"#,
+        );
+        let error = engine
+            .prepare_download("test", &|_| {}, &[Duration::ZERO; 2])
+            .unwrap_err();
+        assert!(error.to_string().contains("checksum mismatch"));
+        assert_eq!(
+            fs::read_to_string(engine.paths.engine_home().join("attempts")).unwrap(),
+            "attempt"
+        );
+    }
+
+    #[test]
+    fn preparation_retry_wait_remains_cancellable() {
+        let (_directory, engine) = preparation_engine(
+            "printf 'error: Dns Failed: Temporary failure in name resolution\\n' >&2; exit 1",
+        );
+        let started = Instant::now();
+        let error = engine
+            .prepare_download(
+                "test",
+                &|event| {
+                    if matches!(event, Output::Stage(stage) if stage.starts_with("Connection interrupted")) {
+                        engine.cancel.store(true, Ordering::Relaxed);
+                    }
+                },
+                &[Duration::from_secs(30)],
+            )
+            .unwrap_err();
+        assert!(error.to_string().contains("cancelled"));
+        assert!(started.elapsed() < Duration::from_secs(2));
+    }
 
     #[test]
     fn reports_progress_when_the_engine_has_pipes_instead_of_a_terminal() {

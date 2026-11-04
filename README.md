@@ -23,6 +23,8 @@ On Linux, the launcher uses the system's OpenGL and X11 or Wayland libraries. Th
 
 The first resource preparation or native mod build can take several minutes and several GB of storage. Subsequent launches reuse prepared resources and builds.
 
+Preparation retries temporary DNS, connection and server-availability failures up to three attempts, reusing completed downloads. Cancel also stops retry waits. If connectivity stays unavailable, restore the connection and press Play again to resume.
+
 Use `--page mods`, `--page updates`, or `--page settings` to open a page directly. Ctrl+1 through Ctrl+4 switch pages inside the app.
 
 ## Features

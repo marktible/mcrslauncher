@@ -49,3 +49,13 @@ Inspected the user's running Flatpak during resource preparation: its file count
 The indeterminate bar now requests a frame every 16.7 ms while visible, independently of resource-download log messages. Minimized windows do not request animation frames. Measured download progress still repaints on worker events, with a one-second timer for its elapsed clock. Idle and game-running screens retain their event-driven rendering. All 26 tests pass, and formatting, Clippy and the Flatpak source-lock check pass.
 
 Rebuilt and installed the 0.2.1 Flatpak, validated its metadata and runtime dependencies, and confirmed its installed command reports 0.2.1. The existing launcher and its preparation subprocess remained running across installation; the animation fix takes effect on the next launcher start.
+
+## Version 0.2.2: resumable preparation after network failures
+
+The user's first preparation failed during transient DNS failures for Mojang's resource and Java hosts. Host and Flatpak DNS subsequently resolved those hosts, and the two reported download URLs returned HTTP 200. Resumed the verified official engine's preparation inside Flatpak with the existing cache. The sound stage completed without a warning, Mojang's Java finished downloading, and Horizon completed its exporters and reported `v0.2.97 is prepared` with exit status 0. Verified both prepared-resource markers and ran the managed Java inside Flatpak: Microsoft OpenJDK 25.0.1. Resource preparation with the user's signed-in account is now verified; the earlier limitation on this step no longer applies. This did not launch or validate gameplay.
+
+Preparation now makes up to three attempts for temporary DNS, connection and HTTP gateway/service failures, with two- and five-second cancellable waits. Existing downloads remain under the official engine's checksum verification. The final CLI error is classified separately from earlier nonfatal sound warnings; other failures retain their original diagnostics. Exhausted retries explain that downloads are saved and Play resumes setup.
+
+All 30 tests pass, including new regressions for cache reuse after DNS failure, retry exhaustion, permanent failures following earlier network warnings, and cancellation during backoff. Formatting, Clippy and the Flatpak source-lock check pass.
+
+Rebuilt and installed the 0.2.2 Flatpak, verified the bundle checksum and runtime dependencies, and confirmed its installed command reports 0.2.2.
