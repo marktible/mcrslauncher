@@ -47,7 +47,7 @@ Only **Horizon native mods** are imported by this launcher. Java/Fabric/Forge `.
 
 For an installed and prepared game, turn off **Install the newest build before playing** in Settings to launch without a GitHub update check. Account renewal and cached ownership handling remain Horizon's responsibility. Turning off startup checks also prevents automatic GitHub checks. Failed checks leave the installed game intact and report the error.
 
-Game updates rebuild installed native mods only when the base build changes or a native build is missing. Mod source updates require a separate trust confirmation. Resource preparation is skipped once the selected build has both its resource manifest and sound resources.
+Game updates rebuild installed native mods only when the base build changes or a native build is missing. The exact build base is prepared before compilation; game updates use their catalog version, and ordinary rebuilds retain the existing native revision. Mod source updates require a separate trust confirmation. Resource preparation is skipped once the target build has both its resource manifest and sound resources.
 
 Failed or cancelled mod builds remain marked as pending. Play retries the build before starting the game, so an older compiled mod set is not launched silently after source changes.
 

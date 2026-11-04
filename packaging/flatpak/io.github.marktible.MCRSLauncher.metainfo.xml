@@ -25,6 +25,9 @@
   <url type="bugtracker">https://github.com/marktible/mcrslauncher/issues</url>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.2.3" date="2026-11-04">
+      <description><p>Prepare the exact Horizon version before native mod compilation, keep rebuilds on their existing revision, and respect the selected update channel.</p></description>
+    </release>
     <release version="0.2.2" date="2026-11-04">
       <description><p>Resume Minecraft preparation automatically after temporary DNS and connection failures, preserving completed downloads and cancellation.</p></description>
     </release>

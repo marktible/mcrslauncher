@@ -59,3 +59,13 @@ Preparation now makes up to three attempts for temporary DNS, connection and HTT
 All 30 tests pass, including new regressions for cache reuse after DNS failure, retry exhaustion, permanent failures following earlier network warnings, and cancellation during backoff. Formatting, Clippy and the Flatpak source-lock check pass.
 
 Rebuilt and installed the 0.2.2 Flatpak, verified the bundle checksum and runtime dependencies, and confirmed its installed command reports 0.2.2.
+
+## Version 0.2.3: prepare native-mod build inputs
+
+The user imported shader mods after moving from a prepared stable release to an unprepared Nightly. Native compilation ran before preparation and failed at Horizon's `need_prepared` gate. Preparation is now a prerequisite of the shared build path used by import, rebuild, update, removal and Play. The same explicit `--version` is passed to preparation and compilation. Ordinary rebuilds retain the selected native revision; game installation builds on its exact catalog version even when another channel has a newer installed version.
+
+All 34 tests pass, and formatting, Clippy and the Flatpak source-lock check pass. New regressions cover preparation before compilation, failed preparation preserving pending changes and blocking compilation, reuse of prepared native builds, and stable catalog builds with an installed Nightly.
+
+Prepared the actual `nightly-2026-11-04-67dad0d` inside Flatpak using the existing Minecraft cache and managed Java. The official preparer completed successfully in 23.4 seconds. Retried the user's two already-imported shader bundles; the complete first build, including managed Rust 1.99.1 and dependency downloads, succeeded in 13 minutes 52 seconds. Horizon installed and selected `native-67dad0d-aa1c023f6ee0`, containing both shader installer crates at version 1.1.1. A repeat build reported up to date and reused the same artifact in 14 seconds without compiling. Native mod compilation inside Flatpak is now verified; the earlier limitation on this step no longer applies. This does not establish in-game shader behavior.
+
+Verified both installed bundles' content digests against `native-mods.json` and the completed build's resource markers, then synchronized the launcher's pending-build flag with the successful official CLI build. Rebuilt and installed the 0.2.3 Flatpak, verified its checksum and runtime dependencies, and reopened its Mods page.

@@ -335,7 +335,9 @@ impl Engine {
             && !snapshot.mods.is_empty()
             && (changed || !snapshot.native_build || receipt.mods_dirty)
         {
-            self.build(settings, true, report)?;
+            // Build on the catalog version just installed, even when another channel has a
+            // newer installed version. Preparation and compilation must use the same base.
+            self.build_version(settings, &version, report)?;
         } else if snapshot.mods.is_empty() {
             // Keep the instance following the current game rather than an old imported build.
             self.run(&["settings", "selected-version", &version], report, true)?;
@@ -344,20 +346,61 @@ impl Engine {
     }
 
     pub fn build(&self, settings: &Settings, update: bool, report: Reporter<'_>) -> Result<()> {
+        let snapshot = self.snapshot()?;
+        let imported_base = snapshot
+            .selected_version
+            .as_deref()
+            .filter(|version| version.starts_with("imported-"))
+            .and_then(|version| {
+                fs::read(
+                    self.paths
+                        .engine_home()
+                        .join("versions")
+                        .join(version)
+                        .join("imported.json"),
+                )
+                .ok()
+            })
+            .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+            .and_then(|record| record["base"].as_str().map(str::to_owned));
+        // Mirror upstream's base selection, then pin it for both prepare and native-build.
+        // A normal rebuild retains an existing native build's revision and incremental cache.
+        let version = imported_base
+            .as_ref()
+            .or(snapshot.selected_version.as_ref())
+            .filter(|version| !update && snapshot.installed.contains(version))
+            .or_else(|| {
+                snapshot.installed.iter().find(|version| {
+                    version.starts_with("nightly-")
+                        || version
+                            .strip_prefix('v')
+                            .is_some_and(|tag| tag.starts_with(|c: char| c.is_ascii_digit()))
+                })
+            })
+            .context("Install Horizon before building native mods")?;
+        self.build_version(settings, version, report)
+    }
+
+    fn build_version(
+        &self,
+        settings: &Settings,
+        version: &str,
+        report: Reporter<'_>,
+    ) -> Result<()> {
         self.verify_local_engine()?;
         self.mark_mods_dirty()?;
+        self.prepare_version(version, report)?;
         report(Output::Stage(
             "Building native mods · incremental compilation".into(),
         ));
-        let mut args = vec![
+        let args = [
             "native-build",
+            "--version",
+            version,
             "--trust-native-code",
             "--profile",
             settings.build_profile.argument(),
         ];
-        if update {
-            args.push("--update");
-        }
         self.run(&args, report, false)?;
         let mut receipt = self.receipt();
         receipt.mods_dirty = false;
@@ -370,7 +413,11 @@ impl Engine {
         let version = snapshot
             .selected_version
             .context("Install Horizon before playing")?;
-        let directory = self.paths.engine_home().join("versions").join(&version);
+        self.prepare_version(&version, report)
+    }
+
+    fn prepare_version(&self, version: &str, report: Reporter<'_>) -> Result<()> {
+        let directory = self.paths.engine_home().join("versions").join(version);
         if let Ok(bytes) = fs::read(directory.join("research-lock.json"))
             && let Ok(lock) = serde_json::from_slice::<Value>(&bytes)
             && let Some(minecraft) = lock["minecraft"]["version"].as_str()
@@ -383,7 +430,7 @@ impl Engine {
             }
         }
         self.prepare_download(
-            &version,
+            version,
             report,
             &[Duration::from_secs(2), Duration::from_secs(5)],
         )

@@ -228,6 +228,41 @@ fn fake_engine(script: &str) -> (tempfile::TempDir, Engine) {
 }
 
 #[cfg(unix)]
+fn fake_build_engine(
+    script: &str,
+    selected: &str,
+    installed: &[&str],
+    prepared: &[&str],
+) -> (tempfile::TempDir, Engine) {
+    let versions = serde_json::json!({"installed":installed,"selected":selected});
+    let prefix = format!(
+        r#"if [ "$1" = --json ]; then
+    case "$2" in
+        account) printf '%s\n' '{{"accounts":[],"owner":true,"sign_in_configured":true}}';;
+        versions) printf '%s\n' '{versions}';;
+        instance) printf '[]\n';;
+    esac
+    exit 0
+fi
+"#
+    );
+    let (directory, engine) = fake_engine(&(prefix + script));
+    for version in prepared {
+        let base = engine.paths.engine_home().join("versions").join(version);
+        let resources = base.join(".local/horizon-client/26.3");
+        fs::create_dir_all(resources.join("assets/minecraft")).unwrap();
+        fs::write(
+            base.join("research-lock.json"),
+            r#"{"minecraft":{"version":"26.3"}}"#,
+        )
+        .unwrap();
+        fs::write(resources.join("horizon-resources.json"), "{}").unwrap();
+        fs::write(resources.join("assets/minecraft/sounds.json"), "{}").unwrap();
+    }
+    (directory, engine)
+}
+
+#[cfg(unix)]
 #[test]
 fn process_arguments_are_not_interpreted_by_a_shell() {
     let (_temp, engine) = fake_engine("printf '%s\\n' \"$@\"");
@@ -279,7 +314,12 @@ fn non_utf8_process_diagnostics_do_not_break_the_launcher() {
 #[cfg(unix)]
 #[test]
 fn failed_native_build_remains_pending_for_retry() {
-    let (_temp, engine) = fake_engine("echo 'compiler failed' >&2; exit 1");
+    let (_temp, engine) = fake_build_engine(
+        "echo 'compiler failed' >&2; exit 1",
+        "v0.2.97",
+        &["v0.2.97"],
+        &["v0.2.97"],
+    );
     let error = engine
         .build(&Settings::default(), false, &|_| {})
         .unwrap_err();
@@ -290,8 +330,12 @@ fn failed_native_build_remains_pending_for_retry() {
 #[cfg(unix)]
 #[test]
 fn native_build_uses_requested_profile_and_clears_pending_changes_on_success() {
-    let (_temp, engine) =
-        fake_engine("printf '%s\\n' \"$@\" > \"$HORIZON_LAUNCHER_HOME/arguments\"");
+    let (_temp, engine) = fake_build_engine(
+        "printf '%s\\n' \"$@\" > \"$HORIZON_LAUNCHER_HOME/arguments\"",
+        "v0.2.97",
+        &["v0.2.97"],
+        &["v0.2.97"],
+    );
     let settings = Settings {
         build_profile: mcrslauncher::model::BuildProfile::Release,
         ..Default::default()
@@ -300,8 +344,110 @@ fn native_build_uses_requested_profile_and_clears_pending_changes_on_success() {
     let arguments = fs::read_to_string(engine.paths.engine_home().join("arguments")).unwrap();
     assert!(arguments.contains("--profile\nrelease\n"));
     assert!(arguments.contains("--trust-native-code\n"));
-    assert!(arguments.contains("--update\n"));
+    assert!(arguments.contains("--version\nv0.2.97\n"));
+    assert!(!arguments.contains("--update\n"));
     assert!(!engine.receipt().mods_dirty);
+}
+
+#[cfg(unix)]
+#[test]
+fn native_build_prepares_the_new_base_before_compiling_and_leaves_selection_to_upstream() {
+    let script = r#"case "$1" in
+prepare)
+    printf '%s' "$4" > "$HORIZON_LAUNCHER_HOME/prepared"
+    printf 'prepare\n' >> "$HORIZON_LAUNCHER_HOME/order";;
+native-build)
+    test "$2" = --version || exit 3
+    test "$(cat "$HORIZON_LAUNCHER_HOME/prepared")" = "$3" || exit 4
+    printf '%s\n' "$@" > "$HORIZON_LAUNCHER_HOME/arguments"
+    printf 'build\n' >> "$HORIZON_LAUNCHER_HOME/order";;
+*) exit 5;;
+esac"#;
+    let (_directory, engine) = fake_build_engine(
+        script,
+        "native-old-cache",
+        &["nightly-new", "native-old-cache", "v0.2.97"],
+        &["native-old-cache", "v0.2.97"],
+    );
+    engine.build(&Settings::default(), true, &|_| {}).unwrap();
+    let home = engine.paths.engine_home();
+    assert_eq!(
+        fs::read_to_string(home.join("order")).unwrap(),
+        "prepare\nbuild\n"
+    );
+    let arguments = fs::read_to_string(home.join("arguments")).unwrap();
+    assert!(arguments.contains("--version\nnightly-new\n"));
+    assert!(!engine.receipt().mods_dirty);
+}
+
+#[cfg(unix)]
+#[test]
+fn rebuilding_a_prepared_native_version_keeps_its_revision_and_skips_preparation() {
+    let script = r#"test "$1" = native-build || exit 3
+printf '%s\n' "$@" > "$HORIZON_LAUNCHER_HOME/arguments""#;
+    let (_directory, engine) = fake_build_engine(
+        script,
+        "native-old-cache",
+        &["nightly-new", "native-old-cache", "v0.2.97"],
+        &["native-old-cache"],
+    );
+    engine.build(&Settings::default(), false, &|_| {}).unwrap();
+    let arguments = fs::read_to_string(engine.paths.engine_home().join("arguments")).unwrap();
+    assert!(arguments.contains("--version\nnative-old-cache\n"));
+}
+
+#[cfg(unix)]
+#[test]
+fn failed_resource_preparation_blocks_compilation_and_preserves_pending_mod_changes() {
+    let script = r#"printf '%s\n' "$1" >> "$HORIZON_LAUNCHER_HOME/order"
+if [ "$1" = prepare ]; then printf 'error: resource exporter failed\n' >&2; exit 1; fi
+exit 3"#;
+    let (_directory, engine) = fake_build_engine(script, "nightly-new", &["nightly-new"], &[]);
+    let error = engine
+        .build(&Settings::default(), false, &|_| {})
+        .unwrap_err();
+    assert!(error.to_string().contains("resource exporter failed"));
+    assert_eq!(
+        fs::read_to_string(engine.paths.engine_home().join("order")).unwrap(),
+        "prepare\n"
+    );
+    assert!(engine.receipt().mods_dirty);
+}
+
+#[cfg(unix)]
+#[test]
+fn game_install_builds_on_its_catalog_version_when_another_channel_is_installed() {
+    let catalog = github::select_catalog(&releases(), Channel::Stable, "linux", "x86_64").unwrap();
+    let script = r#"test "$1" = native-build || exit 3
+printf '%s\n' "$@" > "$HORIZON_LAUNCHER_HOME/arguments""#;
+    let (_directory, engine) = fake_build_engine(
+        script,
+        "nightly-new",
+        &["nightly-new", "v0.2.99"],
+        &["v0.2.99"],
+    );
+    let mods = engine.paths.game_home().join("horizon-native-mods");
+    fs::create_dir_all(&mods).unwrap();
+    fs::write(
+        mods.join("test.origin.json"),
+        r#"{"id":"test","owner":"example","repo":"test","commit":"abc"}"#,
+    )
+    .unwrap();
+    let mut receipt = engine.receipt();
+    receipt.tag = catalog.engine.tag_name.clone();
+    receipt.digest = catalog.engine_asset.digest.clone().unwrap();
+    receipt.game_tag = "v0.2.99".into();
+    receipt.game_digest = mcrslauncher::engine::game_fingerprint(&catalog);
+    fs::write(
+        engine.paths.receipt(),
+        serde_json::to_vec(&receipt).unwrap(),
+    )
+    .unwrap();
+    engine
+        .install_game(&catalog, &Settings::default(), true, &|_| {})
+        .unwrap();
+    let arguments = fs::read_to_string(engine.paths.engine_home().join("arguments")).unwrap();
+    assert!(arguments.contains("--version\nv0.2.99\n"));
 }
 
 #[cfg(unix)]
