@@ -1,0 +1,7 @@
+{
+  "application": "io.github.marktible.MCRSLauncher",
+  "release": "v0.2.5",
+  "bundle_digest": "sha256:428319cab13f060716fc01d3ca19dacbe93bc8afdf6921da5127bbf4dabe9701",
+  "signing_key": "2D491F55DAA3468A6B08E8186B2852C4283B0388",
+  "url": "https://raw.githubusercontent.com/marktible/mcrslauncher/flatpak-repo/repo/"
+}
