@@ -57,6 +57,8 @@ For an installed and prepared game, turn off **Install the newest build before p
 
 Game updates rebuild installed native mods only when the base build changes or a native build is missing. The exact build base is prepared before compilation; game updates use their catalog version, and ordinary rebuilds retain the existing native revision. Mod source updates require a separate trust confirmation. Resource preparation is skipped once the target build has both its resource manifest and sound resources.
 
+Installing a newer Nightly removes older Nightly builds that are neither selected nor used by an instance, matching Horizon's own update cleanup. Release versions keep Horizon's configured number of newest builds, and compiled native builds follow Horizon's spare-build policy.
+
 Failed or cancelled mod builds remain marked as pending. Play retries the build before starting the game, so an older compiled mod set is not launched silently after source changes.
 
 ## Storage

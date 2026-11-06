@@ -357,7 +357,80 @@ impl Engine {
             // Keep the instance following the current game rather than an old imported build.
             self.run(&["settings", "selected-version", &version], report, true)?;
         }
+        self.prune_old_nightlies(&version, report);
         Ok(())
+    }
+
+    /// Horizon removes older Nightlies only from its own update path. Installing an exact tag,
+    /// as this launcher does, skips that path, so those folders would accumulate forever. Remove
+    /// every other Nightly that the selection or an instance does not pin, like an update does.
+    fn prune_old_nightlies(&self, current: &str, report: Reporter<'_>) {
+        if !is_nightly_version(current) {
+            return;
+        }
+        let versions = match self.json(&["versions", "--installed"]) {
+            Ok(value) => value,
+            Err(error) => {
+                report(Output::Log(format!(
+                    "Could not check for old Horizon builds to remove: {error:#}"
+                )));
+                return;
+            }
+        };
+        // Without both answers, an older build could still be selected or pinned. Keep
+        // everything rather than risk deleting a version another instance needs.
+        let settings = match self.json(&["settings"]) {
+            Ok(value) => value,
+            Err(error) => {
+                report(Output::Log(format!(
+                    "Could not check the selected Horizon build: {error:#}"
+                )));
+                return;
+            }
+        };
+        let instances = match self.json(&["instance", "list"]) {
+            Ok(value) => value,
+            Err(error) => {
+                report(Output::Log(format!(
+                    "Could not check the Horizon instances: {error:#}"
+                )));
+                return;
+            }
+        };
+        let mut protected = vec![current.to_string()];
+        for version in [
+            settings["selected_version"].as_str(),
+            versions["selected"].as_str(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            protected.push(version.to_string());
+        }
+        for instance in instances.as_array().into_iter().flatten() {
+            if let Some(version) = instance["version"].as_str() {
+                protected.push(version.to_string());
+            }
+        }
+        for version in versions["installed"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|version| version.as_str())
+        {
+            if version == current
+                || !is_nightly_version(version)
+                || protected.iter().any(|kept| kept == version)
+            {
+                continue;
+            }
+            report(Output::Log(format!("Removing old Horizon build {version}")));
+            if let Err(error) = self.run(&["remove", version], report, true) {
+                report(Output::Log(format!(
+                    "Could not remove old Horizon build {version}: {error:#}"
+                )));
+            }
+        }
     }
 
     pub fn build(&self, settings: &Settings, update: bool, report: Reporter<'_>) -> Result<()> {
@@ -523,6 +596,20 @@ impl Engine {
         }
         unreachable!("preparation returns after the final attempt")
     }
+}
+
+/// Whether `version` names an immutable Nightly build (`nightly-YYYY-MM-DD[-commit]`).
+fn is_nightly_version(version: &str) -> bool {
+    let Some(date) = version.strip_prefix("nightly-").and_then(|v| v.get(..10)) else {
+        return false;
+    };
+    date.bytes().enumerate().all(|(index, byte)| {
+        if index == 4 || index == 7 {
+            byte == b'-'
+        } else {
+            byte.is_ascii_digit()
+        }
+    })
 }
 
 pub fn game_fingerprint(catalog: &Catalog) -> String {

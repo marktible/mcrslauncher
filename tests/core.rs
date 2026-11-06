@@ -452,6 +452,51 @@ printf '%s\n' "$@" > "$HORIZON_LAUNCHER_HOME/arguments""#;
 
 #[cfg(unix)]
 #[test]
+fn installing_a_new_nightly_removes_unpinned_old_nightlies() {
+    let catalog = github::select_catalog(&releases(), Channel::Nightly, "linux", "x86_64").unwrap();
+    let current = catalog.game_version().unwrap();
+    let old = "nightly-2026-11-04-aaaaaaa";
+    let pinned = "nightly-2026-11-03-bbbbbbb";
+    let older = "nightly-2026-11-03-ccccccc";
+    let native = "native-67dad0d-0123456789ab";
+    let script = format!(
+        r#"if [ "$1" = --json ]; then
+    case "$2" in
+        account) printf '%s\n' '{{"accounts":[],"owner":true,"sign_in_configured":true}}';;
+        versions) printf '%s\n' '{{"installed":["{current}","{old}","{pinned}","{older}","v0.2.97","{native}"],"selected":"{native}"}}';;
+        instance) printf '%s\n' '[{{"id":"main","selected":true,"version":"{pinned}"}}]';;
+        settings) printf '%s\n' '{{"selected_version":"{native}"}}';;
+    esac
+    exit 0
+fi
+printf '%s\n' "$@" >> "$HORIZON_LAUNCHER_HOME/commands"
+"#
+    );
+    let (_directory, engine) = fake_engine(&script);
+    let mut receipt = engine.receipt();
+    receipt.tag = catalog.engine.tag_name.clone();
+    receipt.digest = catalog.engine_asset.digest.clone().unwrap();
+    receipt.game_tag = old.into();
+    receipt.game_digest = "old-digest".into();
+    fs::write(
+        engine.paths.receipt(),
+        serde_json::to_vec(&receipt).unwrap(),
+    )
+    .unwrap();
+    engine
+        .install_game(&catalog, &Settings::default(), true, &|_| {})
+        .unwrap();
+    assert_eq!(
+        fs::read_to_string(engine.paths.engine_home().join("commands")).unwrap(),
+        format!(
+            "install\n{current}\nsettings\nselected-version\n{current}\n\
+             remove\n{old}\nremove\n{older}\n"
+        )
+    );
+}
+
+#[cfg(unix)]
+#[test]
 fn snapshot_preserves_the_selected_game_folder_and_public_skin_metadata() {
     let script = r#"case "$2" in
 account) printf '%s\n' '{"accounts":[{"name":"Player","uuid":"0123456789abcdef0123456789abcdef","selected":true}],"sign_in_configured":true,"owner":true}';;
