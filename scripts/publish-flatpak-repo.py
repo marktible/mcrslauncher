@@ -116,7 +116,7 @@ def main():
         # This branch contains generated files only. An orphan snapshot keeps old binary
         # releases out of source clones; the lease prevents overwriting a concurrent publish.
         run("git", "checkout", "--quiet", "--orphan", "publish-" + uuid.uuid4().hex[:12], cwd=site)
-        run("git", "rm", "--quiet", "-r", "--cached", "--ignore-unmatch", ".", cwd=site)
+        run("git", "rm", "--quiet", "-r", "--cached", "--ignore-unmatch", "-f", ".", cwd=site)
         run("git", "add", "-A", cwd=site)
         run("git", "-c", "user.name=Codex", "-c", "user.email=codex@openai.com", "-c", "commit.gpgsign=false", "commit", "--quiet", "-m", f"Publish signed Flatpak update for {tag}", cwd=site)
         run("git", "push", f"--force-with-lease=refs/heads/{BRANCH}:{expected}", "origin", f"HEAD:refs/heads/{BRANCH}", cwd=site)
