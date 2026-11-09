@@ -130,17 +130,33 @@ impl Engine {
         ));
         let meter = Mutex::new(TransferMeter::default());
         let started = Instant::now();
-        let bytes =
-            github::download_verified(&self.client, &catalog.engine_asset, |bytes, total| {
-                self.check_cancel()?;
-                let progress = meter.lock().unwrap_or_else(|e| e.into_inner()).observe(
-                    bytes,
-                    total,
-                    started.elapsed(),
-                );
-                report(Output::Progress(progress));
-                Ok(())
-            })?;
+        let bytes = network::retry(
+            &self.cancel,
+            &[Duration::from_secs(2), Duration::from_secs(5)],
+            |attempt, delay| {
+                report(Output::Stage(format!(
+                    "GitHub download interrupted · retry {attempt} of 3 in {}s",
+                    delay.as_secs()
+                )));
+            },
+            || {
+                github::download_verified(
+                    &self.client,
+                    &catalog.engine_asset,
+                    &self.cancel,
+                    |bytes, total| {
+                        self.check_cancel()?;
+                        let progress = meter.lock().unwrap_or_else(|e| e.into_inner()).observe(
+                            bytes,
+                            total,
+                            started.elapsed(),
+                        );
+                        report(Output::Progress(progress));
+                        Ok(())
+                    },
+                )
+            },
+        )?;
         self.check_cancel()?;
         github::extract_engine(&bytes, &catalog.engine_asset.name, &self.paths.engine())?;
         receipt.tag = catalog.engine.tag_name.clone();

@@ -6,7 +6,7 @@ on:
       tag:
         description: Existing release tag to rebuild on the Linux compatibility baseline
         required: true
-        default: v0.2.5
+        default: v0.2.6
 
 permissions:
   contents: write
@@ -15,7 +15,7 @@ jobs:
   rebuild:
     runs-on: ubuntu-22.04
     env:
-      RELEASE_TAG: ${{ inputs.tag || 'v0.2.5' }}
+      RELEASE_TAG: ${{ inputs.tag || 'v0.2.6' }}
     steps:
       - uses: actions/checkout@v4
         with:

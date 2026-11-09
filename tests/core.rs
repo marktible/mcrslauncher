@@ -21,6 +21,7 @@ fn asset(name: &str) -> Asset {
         browser_download_url: format!(
             "https://github.com/horizon-rust/horizon/releases/download/test/{name}"
         ),
+        url: None,
         size: 4,
         digest: Some(format!("sha256:{}", github::digest_hex(b"test"))),
         updated_at: "2026-11-04T01:00:00Z".into(),

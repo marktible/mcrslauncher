@@ -18,6 +18,8 @@ const MAX_ARCHIVE: u64 = 256 * 1024 * 1024;
 pub struct Asset {
     pub name: String,
     pub browser_download_url: String,
+    #[serde(default)]
+    pub url: Option<String>,
     pub size: u64,
     pub digest: Option<String>,
     #[serde(default)]
@@ -255,17 +257,11 @@ pub fn verify_digest(bytes: &[u8], digest: &str) -> Result<()> {
 pub fn download_verified(
     client: &Client,
     asset: &Asset,
+    cancel: &AtomicBool,
     progress: impl Fn(u64, u64) -> Result<()> + Sync,
 ) -> Result<Vec<u8>> {
-    let url = url::Url::parse(&asset.browser_download_url)?;
-    ensure!(
-        url.scheme() == "https"
-            && url.host_str() == Some("github.com")
-            && url
-                .path()
-                .starts_with("/horizon-rust/horizon/releases/download/"),
-        "Unexpected engine download URL"
-    );
+    let url = download_url(&asset.browser_download_url)?;
+    let fallback = api_asset_url(asset)?;
     ensure!(
         asset.size > 0 && asset.size <= MAX_ARCHIVE,
         "Engine archive is empty or too large"
@@ -274,14 +270,107 @@ pub fn download_verified(
         .digest
         .as_deref()
         .context("Engine release has no SHA-256 digest; download refused")?;
-    let bytes = if asset.size >= 4 * 1024 * 1024 {
-        download_parallel(client, &url, asset.size as usize, &progress)?
-    } else {
-        download_stream(client, &url, asset.size, &progress)?
-    };
-    verify_digest(&bytes, checksum)?;
+    let sources: Vec<_> = std::iter::once(url).chain(fallback).collect();
+    let bytes = download_from_sources(client, &sources, asset.size, checksum, cancel, &progress)?;
     progress(asset.size, asset.size)?;
     Ok(bytes)
+}
+
+fn download_from_sources(
+    client: &Client,
+    sources: &[url::Url],
+    size: u64,
+    checksum: &str,
+    cancel: &AtomicBool,
+    progress: &(impl Fn(u64, u64) -> Result<()> + Sync),
+) -> Result<Vec<u8>> {
+    let mut first_error = None;
+    for source in sources {
+        network::check_cancel(cancel)?;
+        let result: Result<Vec<u8>> = (|| {
+            let bytes = if size >= 4 * 1024 * 1024 {
+                download_parallel(client, source, size as usize, progress)?
+            } else {
+                download_stream(client, source, size, progress)?
+            };
+            verify_digest(&bytes, checksum)?;
+            Ok(bytes)
+        })();
+        match result {
+            Ok(bytes) => return Ok(bytes),
+            Err(error) => {
+                network::check_cancel(cancel)?;
+                first_error = Some(match first_error {
+                    Some(previous)
+                        if network::is_temporary(&previous) && !network::is_temporary(&error) =>
+                    {
+                        previous.context(format!("The GitHub asset API fallback failed: {error:#}"))
+                    }
+                    Some(previous) => {
+                        error.context(format!("The GitHub release download failed: {previous:#}"))
+                    }
+                    None => error,
+                });
+            }
+        }
+    }
+    Err(first_error.expect("a validated asset has at least one download URL"))
+}
+
+fn download_url(text: &str) -> Result<url::Url> {
+    let url = url::Url::parse(text)?;
+    ensure!(
+        url.scheme() == "https"
+            && url.host_str() == Some("github.com")
+            && url.username().is_empty()
+            && url.password().is_none()
+            && url.port().is_none()
+            && url.query().is_none()
+            && url.fragment().is_none()
+            && url
+                .path()
+                .starts_with("/horizon-rust/horizon/releases/download/"),
+        "Unexpected engine download URL"
+    );
+    Ok(url)
+}
+
+/// GitHub's browser download endpoint occasionally returns gateway errors while the
+/// release asset API still redirects to the same file. Accept only the exact upstream
+/// asset endpoint; the checksum is still verified for every source.
+fn api_asset_url(asset: &Asset) -> Result<Option<url::Url>> {
+    let Some(text) = asset.url.as_deref() else {
+        return Ok(None);
+    };
+    let url = url::Url::parse(text).context("Invalid GitHub asset API URL")?;
+    ensure!(
+        url.scheme() == "https"
+            && url.host_str() == Some("api.github.com")
+            && url.username().is_empty()
+            && url.password().is_none()
+            && url.port().is_none()
+            && url.query().is_none()
+            && url.fragment().is_none(),
+        "Unexpected GitHub asset API URL"
+    );
+    let id = url
+        .path()
+        .strip_prefix("/repos/horizon-rust/horizon/releases/assets/")
+        .context("Unexpected GitHub asset API URL")?;
+    ensure!(
+        !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit()),
+        "Unexpected GitHub asset API URL"
+    );
+    Ok(Some(url))
+}
+
+fn download_request(client: &Client, url: &url::Url) -> reqwest::blocking::RequestBuilder {
+    let request = client.get(url.clone());
+    if url.host_str() == Some("api.github.com") {
+        request.header(reqwest::header::ACCEPT, "application/octet-stream")
+    } else {
+        request
+    }
 }
 
 fn download_stream(
@@ -290,7 +379,7 @@ fn download_stream(
     size: u64,
     progress: &(impl Fn(u64, u64) -> Result<()> + Sync),
 ) -> Result<Vec<u8>> {
-    let mut response = client.get(url.clone()).send()?.error_for_status()?;
+    let mut response = download_request(client, url).send()?.error_for_status()?;
     let mut bytes = Vec::with_capacity(size as usize);
     let mut buffer = [0u8; 64 * 1024];
     let mut last = std::time::Instant::now();
@@ -339,8 +428,7 @@ fn download_parallel(
                     let result = (|| -> Result<()> {
                         let start = index * part_size;
                         let end = start + part.len() - 1;
-                        let mut response = client
-                            .get(url.clone())
+                        let mut response = download_request(client, url)
                             .header(reqwest::header::RANGE, format!("bytes={start}-{end}"))
                             .send()?
                             .error_for_status()?;
@@ -565,6 +653,35 @@ mod tests {
         (address, task)
     }
 
+    fn download_server(replies: Vec<(u16, Vec<u8>)>) -> (String, thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = format!("http://{}", listener.local_addr().unwrap());
+        let task = thread::spawn(move || {
+            for (status, body) in replies {
+                let (mut stream, _) = listener.accept().unwrap();
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(2)))
+                    .unwrap();
+                let mut request = Vec::new();
+                let mut byte = [0];
+                while !request.ends_with(b"\r\n\r\n") {
+                    if stream.read(&mut byte).unwrap() == 0 {
+                        break;
+                    }
+                    request.push(byte[0]);
+                }
+                write!(
+                    stream,
+                    "HTTP/1.1 {status} Response\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                )
+                .unwrap();
+                stream.write_all(&body).unwrap();
+            }
+        });
+        (address, task)
+    }
+
     fn releases() -> String {
         let (engine, game) = platform_assets(std::env::consts::OS, std::env::consts::ARCH).unwrap();
         serde_json::json!([
@@ -624,5 +741,56 @@ mod tests {
         );
         assert!(result.unwrap_err().to_string().contains("cancelled"));
         server.join().unwrap();
+    }
+
+    #[test]
+    fn engine_download_falls_back_to_the_release_asset_api() {
+        let (address, server) = download_server(vec![(504, Vec::new()), (200, b"test".to_vec())]);
+        let client = Client::builder().no_proxy().build().unwrap();
+        let sources = [
+            url::Url::parse(&format!("{address}/release")).unwrap(),
+            url::Url::parse(&format!("{address}/api")).unwrap(),
+        ];
+        let checksum = format!("sha256:{}", digest_hex(b"test"));
+        let bytes = download_from_sources(
+            &client,
+            &sources,
+            4,
+            &checksum,
+            &AtomicBool::new(false),
+            &|_, _| Ok(()),
+        )
+        .unwrap();
+        assert_eq!(bytes, b"test");
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn api_fallback_only_accepts_the_upstream_release_asset_endpoint() {
+        let asset = |url: &str| Asset {
+            name: "horizon-launcher-linux-x86_64.tar.gz".into(),
+            browser_download_url:
+                "https://github.com/horizon-rust/horizon/releases/download/test/engine".into(),
+            url: Some(url.into()),
+            size: 4,
+            digest: Some(format!("sha256:{}", digest_hex(b"test"))),
+            updated_at: String::new(),
+        };
+        assert!(
+            api_asset_url(&asset(
+                "https://api.github.com/repos/horizon-rust/horizon/releases/assets/123"
+            ))
+            .unwrap()
+            .is_some()
+        );
+        for invalid in [
+            "https://example.test/repos/horizon-rust/horizon/releases/assets/123",
+            "https://api.github.com/repos/other/horizon/releases/assets/123",
+            "https://api.github.com/repos/horizon-rust/horizon/releases/assets/not-a-number",
+            "https://api.github.com/repos/horizon-rust/horizon/releases/assets/123?x=1",
+            "http://api.github.com/repos/horizon-rust/horizon/releases/assets/123",
+        ] {
+            assert!(api_asset_url(&asset(invalid)).is_err(), "{invalid}");
+        }
     }
 }

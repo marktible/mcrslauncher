@@ -182,9 +182,28 @@ fn execute_with_catalog(
                 match catalog() {
                     Ok(catalog) => {
                         send(Event::Catalog(Box::new(catalog.clone())));
-                        engine.ensure_engine(&catalog, report)?;
-                        if matches!(action, Action::InstallGame | Action::Play) {
-                            engine.install_game(&catalog, settings, true, report)?;
+                        let update = engine.ensure_engine(&catalog, report).and_then(|_| {
+                            if matches!(action, Action::InstallGame | Action::Play) {
+                                engine.install_game(&catalog, settings, true, report)
+                            } else {
+                                Ok(())
+                            }
+                        });
+                        if let Err(error) = update {
+                            crate::network::check_cancel(&engine.cancel)?;
+                            if matches!(action, Action::Play) && engine.can_play_installed()? {
+                                report(Output::Log(format!(
+                                    "Could not update Horizon; using the prepared installed build: {error:#}"
+                                )));
+                                send(Event::UpdateUnavailable(
+                                    "Could not download the latest Horizon update. Play is using your prepared installed build."
+                                        .into(),
+                                ));
+                            } else {
+                                return Err(error.context(
+                                    "Could not install the latest Horizon update. An installed, prepared build is needed to play while updates are unavailable.",
+                                ));
+                            }
                         }
                     }
                     Err(error) => {
@@ -354,6 +373,107 @@ test "$1" = play
 
     fn unavailable() -> Result<Catalog> {
         anyhow::bail!("GitHub: Temporary failure in name resolution")
+    }
+
+    fn catalog_with_failed_engine_download() -> Catalog {
+        let asset = github::Asset {
+            name: "horizon-launcher-linux-x86_64.tar.gz".into(),
+            browser_download_url:
+                "https://github.com/horizon-rust/horizon/releases/download/test/engine".into(),
+            url: None,
+            size: 4,
+            digest: None,
+            updated_at: String::new(),
+        };
+        let release = github::Release {
+            tag_name: "launcher@test".into(),
+            name: "Launcher".into(),
+            body: String::new(),
+            published_at: Some("2026-11-09".into()),
+            prerelease: false,
+            draft: false,
+            assets: vec![asset.clone()],
+        };
+        Catalog {
+            engine: release.clone(),
+            engine_asset: asset.clone(),
+            game: release.clone(),
+            game_asset: asset,
+        }
+    }
+
+    #[test]
+    fn failed_engine_update_still_plays_a_verified_prepared_build() {
+        let (_temporary, engine) = installed(true, true, false);
+        let events = Mutex::new(Vec::new());
+        let outputs = Mutex::new(Vec::new());
+        execute_with_catalog(
+            &engine,
+            &Action::Play,
+            &Settings::default(),
+            &|event| events.lock().unwrap().push(event),
+            &|output| outputs.lock().unwrap().push(output),
+            &|| Ok(catalog_with_failed_engine_download()),
+        )
+        .unwrap();
+        assert_eq!(
+            fs::read_to_string(engine.paths.engine_home().join("commands")).unwrap(),
+            "play\n"
+        );
+        assert!(
+            events
+                .into_inner()
+                .unwrap()
+                .iter()
+                .any(|event| matches!(event, Event::UpdateUnavailable(_)))
+        );
+        assert!(
+            outputs
+                .into_inner()
+                .unwrap()
+                .iter()
+                .any(|output| matches!(output, Output::Playing))
+        );
+    }
+
+    #[test]
+    fn failed_engine_update_does_not_bypass_ownership_preparation_or_pending_mods() {
+        for (owner, prepared, dirty) in [
+            (false, true, false),
+            (true, false, false),
+            (true, true, true),
+        ] {
+            let (_temporary, engine) = installed(owner, prepared, dirty);
+            assert!(
+                execute_with_catalog(
+                    &engine,
+                    &Action::Play,
+                    &Settings::default(),
+                    &|_| {},
+                    &|_| {},
+                    &|| Ok(catalog_with_failed_engine_download()),
+                )
+                .is_err()
+            );
+            assert!(!engine.paths.engine_home().join("commands").exists());
+        }
+    }
+
+    #[test]
+    fn explicit_install_does_not_fall_back_when_the_engine_download_fails() {
+        let (_temporary, engine) = installed(true, true, false);
+        assert!(
+            execute_with_catalog(
+                &engine,
+                &Action::InstallGame,
+                &Settings::default(),
+                &|_| {},
+                &|_| {},
+                &|| Ok(catalog_with_failed_engine_download()),
+            )
+            .is_err()
+        );
+        assert!(!engine.paths.engine_home().join("commands").exists());
     }
 
     #[test]

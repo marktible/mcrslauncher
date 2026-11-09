@@ -95,3 +95,13 @@ Published the verified v0.2.5 release bundle as a signed OSTree repository on th
 An isolated OSTree client rejected the repository without the trusted public key, then successfully verified and pulled it after importing that key. The actual user installation was migrated from its standalone-bundle origin to `mcrslauncher`. Both `gpg-verify` and `gpg-verify-summary` are enabled. The installed command still reports 0.2.5, and `flatpak update --user --assumeyes --noninteractive io.github.marktible.MCRSLauncher` succeeds with the current version up to date. Standard `flatpak update` includes matching per-user refs as well as system refs.
 
 Future GitHub releases require the documented local signed-repository publication step before Flatpak clients see the update. The private signing key has not been placed in GitHub Actions, so that publication is a maintainer operation rather than an automatic part of the release workflow.
+
+## Version 0.2.6: engine download fallback
+
+The user's setup failed with `HTTP status server error (504 Gateway Time-out)` for the official `launcher@0.2.57` Linux archive. The release asset exists: the GitHub API reported the expected size and SHA-256 digest. While the browser download endpoint returned HTTP 504 for the archive, the GitHub release-asset API returned a signed redirect and served the same file.
+
+Engine downloads now retry temporary HTTP 502–504, timeout and connection failures up to three attempts with cancellable two- and five-second waits. If the browser endpoint still fails, the launcher retries through the exact upstream release-asset API URL from the same verified API response, sending `Accept: application/octet-stream`. Every source must pass the published SHA-256 check before installation; the fallback is never used to bypass verification.
+
+Downloaded the real `launcher@0.2.57` archive through the fallback path: 29,109,458 bytes matched the published SHA-256 digest. All 49 tests pass, including a local HTTP regression for a 504 followed by a successful fallback source and validation that only the upstream asset API path is accepted. Formatting and Clippy pass.
+
+For Play, a failed engine or game update no longer blocks an already verified, prepared installation. The launcher reports an informational update-unavailable state and launches the installed build after the normal ownership, checksum, prepared-resource and pending-mod checks. Explicit setup or install requests still fail rather than claiming the update succeeded.

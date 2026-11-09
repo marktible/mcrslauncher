@@ -29,7 +29,7 @@ The first resource preparation or native mod build can take several minutes and 
 
 Preparation retries temporary DNS, connection and server-availability failures up to three attempts, reusing completed downloads. Cancel also stops retry waits. If connectivity stays unavailable, restore the connection and press Play again to resume.
 
-GitHub update checks also retry temporary network failures. If a check stays unavailable, the Updates page shows that status and retains any last-known release details without claiming they are current. Play can continue with a verified, prepared installed build when there are no pending mod changes; Horizon still checks the Minecraft account. Explicit installation requests require a successful update check.
+GitHub update checks also retry temporary network failures. If a check stays unavailable, the Updates page shows that status and retains any last-known release details without claiming they are current. Engine downloads retry temporary GitHub failures and use GitHub's release-asset API when the browser download endpoint returns a gateway error. Play can continue with a verified, prepared installed build when there are no pending mod changes; Horizon still checks the Minecraft account. Explicit installation requests require the update to succeed.
 
 The desktop window resizes down to 480×360. Narrow windows use compact top navigation and stacked Play cards; action rows wrap, content scrolls, and dialogs can be resized. Wide windows keep the sidebar, whose width can also be adjusted.
 
