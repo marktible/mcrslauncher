@@ -1,5 +1,13 @@
 # Validation — 2026-11-04
 
+## Launcher update controls — 2026-11-11
+
+Added manual MCRS release checks, platform package selection, verified native downloads, atomic executable replacement on Unix, and a restart action. Windows and unwritable installations keep a verified download for manual replacement. Flatpak delegates to the system software updater and provides a copyable update command; no additional sandbox permissions are requested. Horizon's automatic-check preferences remain separate.
+
+All 58 local tests pass. Coverage includes numeric version comparison, native package selection, repository isolation between MCRS and Horizon downloads, archive extraction and duplicate rejection, replacement failure and cancellation preserving the installed executable, and rejecting launcher update actions in offline mode. Formatting, Clippy with warnings denied, and the Flatpak Cargo source-lock check pass. Tests replace temporary fixture files only; a live self-update/restart, software-center handoff, and native Windows/macOS update have not been exercised.
+
+Built the native Linux release and packaged it with the existing Flatpak script. AppStream validation, the executable smoke test inside the 26.08 runtime, and native C/ALSA/libudev prerequisites passed. Reinstalled the existing system-wide Flatpak without creating a second user installation. Its installed executable's SHA-256 matches the new release binary, and `flatpak run --system io.github.marktible.MCRSLauncher --help` succeeds. This local build retains the 0.2.6 version label; no new release tag was created.
+
 ## Passed locally
 
 - `cargo fmt --check`

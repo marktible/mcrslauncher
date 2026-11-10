@@ -2,6 +2,7 @@ use crate::{
     engine::{Engine, Output},
     github::{self, Catalog},
     model::{Paths, Receipt, Settings, Snapshot},
+    updater::{self, LauncherRelease, UpdateOutcome},
 };
 use anyhow::{Result, ensure};
 use std::{
@@ -17,6 +18,8 @@ use std::{
 pub enum Action {
     Refresh,
     CheckUpdates,
+    CheckLauncherUpdate,
+    InstallLauncherUpdate(Box<LauncherRelease>),
     Setup,
     SignIn,
     SignOut(String),
@@ -35,6 +38,8 @@ impl Action {
         match self {
             Self::Refresh => "Refreshing library",
             Self::CheckUpdates => "Checking GitHub for updates",
+            Self::CheckLauncherUpdate => "Checking for MCRS Launcher updates",
+            Self::InstallLauncherUpdate(_) => "Updating MCRS Launcher",
             Self::Setup => "Setting up Horizon",
             Self::SignIn => "Signing in with Microsoft",
             Self::SignOut(_) => "Signing out",
@@ -56,6 +61,8 @@ pub enum Event {
     Snapshot(Snapshot),
     Catalog(Box<Catalog>),
     UpdateUnavailable(String),
+    LauncherRelease(LauncherRelease),
+    LauncherUpdated(UpdateOutcome),
     Receipt(Receipt),
     Done(std::result::Result<String, String>),
 }
@@ -96,7 +103,11 @@ impl Worker {
                 engine.cancel.store(false, Ordering::Relaxed);
                 if !matches!(
                     action,
-                    Action::Refresh | Action::CheckUpdates | Action::CheckModUpdates
+                    Action::Refresh
+                        | Action::CheckUpdates
+                        | Action::CheckModUpdates
+                        | Action::CheckLauncherUpdate
+                        | Action::InstallLauncherUpdate(_)
                 ) {
                     match engine.snapshot() {
                         Ok(snapshot) => send(Event::Snapshot(snapshot)),
@@ -154,7 +165,47 @@ fn execute_with_catalog(
     report: crate::engine::Reporter<'_>,
     catalog: &dyn Fn() -> Result<Catalog>,
 ) -> Result<String> {
+    if settings.offline_mode {
+        match action {
+            Action::Play => {
+                engine.play_offline(report)?;
+                return Ok("Offline game closed".into());
+            }
+            Action::Refresh | Action::SelectAccount(_) | Action::SignOut(_) => {}
+            _ => anyhow::bail!("Turn off Offline mode to use this action"),
+        }
+    }
     match action {
+        Action::CheckLauncherUpdate => {
+            let release = updater::check(&engine.client, &engine.cancel, report)?;
+            let newer = release.newer_than(env!("CARGO_PKG_VERSION"))?;
+            send(Event::LauncherRelease(release));
+            return Ok(if newer {
+                "MCRS Launcher update available"
+            } else {
+                "MCRS Launcher is up to date"
+            }
+            .into());
+        }
+        Action::InstallLauncherUpdate(release) => {
+            let outcome = updater::install(
+                &engine.paths,
+                &engine.client,
+                release,
+                &engine.cancel,
+                report,
+            )?;
+            let message = match &outcome {
+                UpdateOutcome::Installed(_) => {
+                    "MCRS Launcher updated. Restart to use the new version.".into()
+                }
+                UpdateOutcome::Downloaded { reason, .. } => format!(
+                    "Verified update downloaded. Replace the launcher manually after closing it: {reason}"
+                ),
+            };
+            send(Event::LauncherUpdated(outcome));
+            return Ok(message);
+        }
         Action::Refresh => {
             send(Event::Snapshot(engine.snapshot()?));
             return Ok("Library refreshed".into());
@@ -373,6 +424,117 @@ test "$1" = play
 
     fn unavailable() -> Result<Catalog> {
         anyhow::bail!("GitHub: Temporary failure in name resolution")
+    }
+
+    #[test]
+    fn offline_play_starts_the_prepared_client_without_accounts_or_catalog_requests() {
+        let (_temporary, engine) = installed(false, true, false);
+        let binary = engine
+            .paths
+            .engine_home()
+            .join("versions/native-test/horizon-client");
+        fs::write(&binary, "#!/bin/sh\nprintf '%s\\n' \"$@\" > offline-arguments\nprintf '%s' \"$HORIZON_HOME\" > offline-home\n").unwrap();
+        fs::set_permissions(&binary, fs::Permissions::from_mode(0o755)).unwrap();
+        let settings = Settings {
+            offline_mode: true,
+            ..Settings::default()
+        };
+        execute_with_catalog(&engine, &Action::Play, &settings, &|_| {}, &|_| {}, &|| {
+            panic!("offline play must not check GitHub")
+        })
+        .unwrap();
+        let args = fs::read_to_string(engine.paths.game_home().join("offline-arguments")).unwrap();
+        assert_eq!(
+            args,
+            format!(
+                "--resources\n{}\n",
+                engine
+                    .paths
+                    .engine_home()
+                    .join("versions/native-test/.local/horizon-client/26.3")
+                    .display()
+            )
+        );
+        assert_eq!(
+            fs::read_to_string(engine.paths.game_home().join("offline-home")).unwrap(),
+            engine.paths.game_home().to_str().unwrap()
+        );
+        assert!(!engine.paths.engine_home().join("commands").exists());
+    }
+
+    #[test]
+    fn offline_mode_rejects_downloads_missing_resources_and_pending_mods() {
+        let settings = Settings {
+            offline_mode: true,
+            ..Settings::default()
+        };
+        for (prepared, dirty) in [(false, false), (true, true)] {
+            let (_temporary, engine) = installed(false, prepared, dirty);
+            assert!(
+                execute_with_catalog(
+                    &engine,
+                    &Action::Play,
+                    &settings,
+                    &|_| {},
+                    &|_| {},
+                    &|| panic!("offline play must not check GitHub")
+                )
+                .is_err()
+            );
+            assert!(!engine.paths.engine_home().join("commands").exists());
+        }
+        let (_temporary, engine) = installed(false, true, false);
+        for action in [
+            Action::Setup,
+            Action::SignIn,
+            Action::CheckUpdates,
+            Action::CheckLauncherUpdate,
+            Action::InstallLauncherUpdate(Box::new(LauncherRelease {
+                tag: "v9.0.0".into(),
+                notes: String::new(),
+                asset: None,
+            })),
+            Action::InstallGame,
+            Action::BuildMods,
+            Action::CheckModUpdates,
+            Action::UpdateMods,
+            Action::ImportMod("test".into()),
+            Action::RemoveMod("test".into()),
+        ] {
+            let error =
+                execute_with_catalog(&engine, &action, &settings, &|_| {}, &|_| {}, &|| {
+                    panic!("offline mode must not check GitHub")
+                })
+                .unwrap_err();
+            assert!(error.to_string().contains("Turn off Offline mode"));
+        }
+    }
+
+    #[test]
+    fn offline_play_preserves_integrity_and_cancellation_checks() {
+        let settings = Settings {
+            offline_mode: true,
+            ..Settings::default()
+        };
+        for cancelled in [false, true] {
+            let (_temporary, engine) = installed(false, true, false);
+            if cancelled {
+                engine.cancel.store(true, Ordering::Relaxed);
+            } else {
+                fs::write(engine.paths.engine(), "corrupted engine").unwrap();
+            }
+            let error =
+                execute_with_catalog(&engine, &Action::Play, &settings, &|_| {}, &|_| {}, &|| {
+                    panic!("offline play must not check GitHub")
+                })
+                .unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains(if cancelled { "cancelled" } else { "changed" })
+            );
+            assert!(!engine.paths.engine_home().join("commands").exists());
+        }
     }
 
     fn catalog_with_failed_engine_download() -> Catalog {

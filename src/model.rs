@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     fs,
     path::{Path, PathBuf},
+    time::Duration,
 };
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -39,11 +40,42 @@ impl BuildProfile {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UpdateCheckInterval {
+    StartupOnly,
+    #[default]
+    Every15Minutes,
+    Every30Minutes,
+    EveryHour,
+}
+
+impl UpdateCheckInterval {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::StartupOnly => "At startup only",
+            Self::Every15Minutes => "At startup and every 15 minutes",
+            Self::Every30Minutes => "At startup and every 30 minutes",
+            Self::EveryHour => "At startup and every hour",
+        }
+    }
+
+    pub fn duration(self) -> Option<Duration> {
+        match self {
+            Self::StartupOnly => None,
+            Self::Every15Minutes => Some(Duration::from_secs(15 * 60)),
+            Self::Every30Minutes => Some(Duration::from_secs(30 * 60)),
+            Self::EveryHour => Some(Duration::from_secs(60 * 60)),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
+    pub offline_mode: bool,
     pub channel: Channel,
     pub auto_check: bool,
+    pub update_check_interval: UpdateCheckInterval,
     pub update_before_play: bool,
     pub minimize_on_play: bool,
     pub build_profile: BuildProfile,
@@ -52,11 +84,23 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            offline_mode: false,
             channel: Channel::Nightly,
             auto_check: true,
+            update_check_interval: UpdateCheckInterval::default(),
             update_before_play: true,
             minimize_on_play: true,
             build_profile: BuildProfile::Performance,
+        }
+    }
+}
+
+impl Settings {
+    pub fn automatic_update_interval(&self) -> Option<Duration> {
+        if self.auto_check && !self.offline_mode {
+            self.update_check_interval.duration()
+        } else {
+            None
         }
     }
 }

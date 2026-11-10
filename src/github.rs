@@ -260,16 +260,26 @@ pub fn download_verified(
     cancel: &AtomicBool,
     progress: impl Fn(u64, u64) -> Result<()> + Sync,
 ) -> Result<Vec<u8>> {
-    let url = download_url(&asset.browser_download_url)?;
-    let fallback = api_asset_url(asset)?;
+    download_verified_from_repo(client, asset, "horizon-rust/horizon", cancel, progress)
+}
+
+pub(crate) fn download_verified_from_repo(
+    client: &Client,
+    asset: &Asset,
+    repository: &str,
+    cancel: &AtomicBool,
+    progress: impl Fn(u64, u64) -> Result<()> + Sync,
+) -> Result<Vec<u8>> {
+    let url = download_url(&asset.browser_download_url, repository)?;
+    let fallback = api_asset_url(asset, repository)?;
     ensure!(
         asset.size > 0 && asset.size <= MAX_ARCHIVE,
-        "Engine archive is empty or too large"
+        "Release archive is empty or too large"
     );
     let checksum = asset
         .digest
         .as_deref()
-        .context("Engine release has no SHA-256 digest; download refused")?;
+        .context("Release has no SHA-256 digest; download refused")?;
     let sources: Vec<_> = std::iter::once(url).chain(fallback).collect();
     let bytes = download_from_sources(client, &sources, asset.size, checksum, cancel, &progress)?;
     progress(asset.size, asset.size)?;
@@ -317,7 +327,7 @@ fn download_from_sources(
     Err(first_error.expect("a validated asset has at least one download URL"))
 }
 
-fn download_url(text: &str) -> Result<url::Url> {
+fn download_url(text: &str, repository: &str) -> Result<url::Url> {
     let url = url::Url::parse(text)?;
     ensure!(
         url.scheme() == "https"
@@ -329,8 +339,8 @@ fn download_url(text: &str) -> Result<url::Url> {
             && url.fragment().is_none()
             && url
                 .path()
-                .starts_with("/horizon-rust/horizon/releases/download/"),
-        "Unexpected engine download URL"
+                .starts_with(&format!("/{repository}/releases/download/")),
+        "Unexpected release download URL"
     );
     Ok(url)
 }
@@ -338,7 +348,7 @@ fn download_url(text: &str) -> Result<url::Url> {
 /// GitHub's browser download endpoint occasionally returns gateway errors while the
 /// release asset API still redirects to the same file. Accept only the exact upstream
 /// asset endpoint; the checksum is still verified for every source.
-fn api_asset_url(asset: &Asset) -> Result<Option<url::Url>> {
+fn api_asset_url(asset: &Asset, repository: &str) -> Result<Option<url::Url>> {
     let Some(text) = asset.url.as_deref() else {
         return Ok(None);
     };
@@ -355,7 +365,7 @@ fn api_asset_url(asset: &Asset) -> Result<Option<url::Url>> {
     );
     let id = url
         .path()
-        .strip_prefix("/repos/horizon-rust/horizon/releases/assets/")
+        .strip_prefix(&format!("/repos/{repository}/releases/assets/"))
         .context("Unexpected GitHub asset API URL")?;
     ensure!(
         !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit()),
@@ -390,7 +400,7 @@ fn download_stream(
         }
         ensure!(
             bytes.len() as u64 + read as u64 <= MAX_ARCHIVE,
-            "Engine download exceeded the size limit"
+            "Release download exceeded the size limit"
         );
         bytes.extend_from_slice(&buffer[..read]);
         if last.elapsed() >= Duration::from_millis(100) {
@@ -398,7 +408,10 @@ fn download_stream(
             last = std::time::Instant::now();
         }
     }
-    ensure!(bytes.len() as u64 == size, "Engine download was incomplete");
+    ensure!(
+        bytes.len() as u64 == size,
+        "Release download was incomplete"
+    );
     Ok(bytes)
 }
 
@@ -454,7 +467,7 @@ fn download_parallel(
                         while offset < part.len() {
                             ensure!(!aborted.load(Ordering::Relaxed), "Download stream stopped");
                             let count = response.read(&mut part[offset..])?;
-                            ensure!(count > 0, "Engine download was incomplete");
+                            ensure!(count > 0, "Release download was incomplete");
                             offset += count;
                             let total = downloaded.fetch_add(count, Ordering::Relaxed) + count;
                             if last.elapsed() >= Duration::from_millis(200) {
@@ -497,6 +510,15 @@ pub fn extract_engine(bytes: &[u8], archive_name: &str, destination: &Path) -> R
     } else {
         "horizon-launcher"
     };
+    extract_program(bytes, archive_name, expected, destination)
+}
+
+pub(crate) fn extract_program(
+    bytes: &[u8],
+    archive_name: &str,
+    expected: &str,
+    destination: &Path,
+) -> Result<()> {
     let mut program = None;
     if archive_name.ends_with(".tar.gz") {
         let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(bytes));
@@ -507,7 +529,7 @@ pub fn extract_engine(bytes: &[u8], archive_name: &str, destination: &Path) -> R
             {
                 ensure!(
                     program.is_none(),
-                    "Engine archive contains duplicate executables"
+                    "Release archive contains duplicate executables"
                 );
                 let mut data = Vec::new();
                 entry
@@ -516,7 +538,7 @@ pub fn extract_engine(bytes: &[u8], archive_name: &str, destination: &Path) -> R
                     .read_to_end(&mut data)?;
                 ensure!(
                     data.len() as u64 <= MAX_ARCHIVE,
-                    "Extracted engine is too large"
+                    "Extracted executable is too large"
                 );
                 program = Some(data);
             }
@@ -533,7 +555,7 @@ pub fn extract_engine(bytes: &[u8], archive_name: &str, destination: &Path) -> R
             {
                 ensure!(
                     program.is_none(),
-                    "Engine archive contains duplicate executables"
+                    "Release archive contains duplicate executables"
                 );
                 let mut data = Vec::new();
                 entry
@@ -542,17 +564,19 @@ pub fn extract_engine(bytes: &[u8], archive_name: &str, destination: &Path) -> R
                     .read_to_end(&mut data)?;
                 ensure!(
                     data.len() as u64 <= MAX_ARCHIVE,
-                    "Extracted engine is too large"
+                    "Extracted executable is too large"
                 );
                 program = Some(data);
             }
         }
     } else {
-        bail!("Unsupported engine archive format");
+        bail!("Unsupported release archive format");
     }
-    let bytes = program.context("The release archive does not contain horizon-launcher")?;
-    let mut temporary =
-        tempfile::NamedTempFile::new_in(destination.parent().context("Missing runtime folder")?)?;
+    let bytes =
+        program.with_context(|| format!("The release archive does not contain {expected}"))?;
+    let mut temporary = tempfile::NamedTempFile::new_in(
+        destination.parent().context("Missing destination folder")?,
+    )?;
     temporary.write_all(&bytes)?;
     temporary.as_file().sync_all()?;
     #[cfg(unix)]
@@ -766,6 +790,29 @@ mod tests {
     }
 
     #[test]
+    fn launcher_and_engine_downloads_cannot_substitute_each_others_repositories() {
+        for repository in ["horizon-rust/horizon", "marktible/mcrslauncher"] {
+            let url = format!("https://github.com/{repository}/releases/download/v1.2.3/package");
+            assert!(download_url(&url, repository).is_ok());
+            let other = if repository == "marktible/mcrslauncher" {
+                "horizon-rust/horizon"
+            } else {
+                "marktible/mcrslauncher"
+            };
+            assert!(download_url(&url, other).is_err());
+            assert!(
+                download_url(
+                    &format!(
+                        "https://github.com/{repository}-fake/releases/download/v1.2.3/package"
+                    ),
+                    repository
+                )
+                .is_err()
+            );
+        }
+    }
+
+    #[test]
     fn api_fallback_only_accepts_the_upstream_release_asset_endpoint() {
         let asset = |url: &str| Asset {
             name: "horizon-launcher-linux-x86_64.tar.gz".into(),
@@ -777,9 +824,10 @@ mod tests {
             updated_at: String::new(),
         };
         assert!(
-            api_asset_url(&asset(
-                "https://api.github.com/repos/horizon-rust/horizon/releases/assets/123"
-            ))
+            api_asset_url(
+                &asset("https://api.github.com/repos/horizon-rust/horizon/releases/assets/123"),
+                "horizon-rust/horizon"
+            )
             .unwrap()
             .is_some()
         );
@@ -790,7 +838,10 @@ mod tests {
             "https://api.github.com/repos/horizon-rust/horizon/releases/assets/123?x=1",
             "http://api.github.com/repos/horizon-rust/horizon/releases/assets/123",
         ] {
-            assert!(api_asset_url(&asset(invalid)).is_err(), "{invalid}");
+            assert!(
+                api_asset_url(&asset(invalid), "horizon-rust/horizon").is_err(),
+                "{invalid}"
+            );
         }
     }
 }

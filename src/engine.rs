@@ -185,14 +185,26 @@ impl Engine {
         args: &[&str],
         report: Reporter<'_>,
         quiet: bool,
-        mut transfer: Option<FileTransfer>,
+        transfer: Option<FileTransfer>,
     ) -> Result<String> {
         self.check_cancel()?;
         let mut command = Command::new(self.paths.engine());
         command
             .args(args)
             .env("HORIZON_LAUNCHER_HOME", self.paths.engine_home())
-            .env("HORIZON_HOME", self.paths.game_home())
+            .env("HORIZON_HOME", self.paths.game_home());
+        self.run_command(command, report, quiet, transfer)
+    }
+
+    fn run_command(
+        &self,
+        mut command: Command,
+        report: Reporter<'_>,
+        quiet: bool,
+        mut transfer: Option<FileTransfer>,
+    ) -> Result<String> {
+        self.check_cancel()?;
+        command
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -529,6 +541,65 @@ impl Engine {
             }))
     }
 
+    /// Start the prepared client without invoking account renewal or downloading anything.
+    pub fn play_offline(&self, report: Reporter<'_>) -> Result<()> {
+        self.verify_local_engine()?;
+        ensure!(
+            !self.receipt().mods_dirty,
+            "Pending mod changes need an online build before offline play"
+        );
+        let snapshot = self.snapshot()?;
+        let version = snapshot
+            .selected_version
+            .as_deref()
+            .context("Go online to install and prepare Horizon before playing offline")?;
+        ensure!(
+            snapshot.installed.iter().any(|v| v == version) && self.resources_ready(version),
+            "Go online to install and prepare the selected build before playing offline"
+        );
+        let directory = self
+            .paths
+            .engine_home()
+            .join("versions")
+            .join(version)
+            .canonicalize()?;
+        let binary = directory.join(if cfg!(windows) {
+            "horizon-client.exe"
+        } else {
+            "horizon-client"
+        });
+        ensure!(
+            binary.is_file(),
+            "The installed game executable is missing. Reinstall it online."
+        );
+        let resources = self
+            .resources_path(version)
+            .context("Missing prepared resources")?
+            .canonicalize()?;
+        fs::create_dir_all(&snapshot.game_home)?;
+        let home = snapshot.game_home.canonicalize()?;
+        let mut command = Command::new(binary);
+        command
+            .current_dir(&home)
+            .env("HORIZON_HOME", &home)
+            .env_remove("HORIZON_ACCOUNT_SESSIONS")
+            .env_remove("HORIZON_LAUNCHER_EXE")
+            .arg("--resources")
+            .arg(resources);
+        for key in [
+            "LIBGL_ALWAYS_SOFTWARE",
+            "GALLIUM_DRIVER",
+            "WEBKIT_DISABLE_DMABUF_RENDERER",
+            "WEBKIT_DISABLE_COMPOSITING_MODE",
+        ] {
+            command.env_remove(key);
+        }
+        report(Output::Stage("Horizon is running offline".into()));
+        report(Output::Playing);
+        self.run_command(command, report, false, None)?;
+        Ok(())
+    }
+
     fn prepare_version(&self, version: &str, report: Reporter<'_>) -> Result<()> {
         if self.resources_ready(version) {
             return Ok(());
@@ -540,20 +611,26 @@ impl Engine {
         )
     }
 
-    fn resources_ready(&self, version: &str) -> bool {
+    fn resources_path(&self, version: &str) -> Option<std::path::PathBuf> {
+        if !single_path_component(version) {
+            return None;
+        }
         let directory = self.paths.engine_home().join("versions").join(version);
         if let Ok(bytes) = fs::read(directory.join("research-lock.json"))
             && let Ok(lock) = serde_json::from_slice::<Value>(&bytes)
             && let Some(minecraft) = lock["minecraft"]["version"].as_str()
+            && single_path_component(minecraft)
         {
-            let resources = directory.join(".local/horizon-client").join(minecraft);
-            if resources.join("horizon-resources.json").is_file()
-                && resources.join("assets/minecraft/sounds.json").is_file()
-            {
-                return true;
-            }
+            return Some(directory.join(".local/horizon-client").join(minecraft));
         }
-        false
+        None
+    }
+
+    fn resources_ready(&self, version: &str) -> bool {
+        self.resources_path(version).is_some_and(|resources| {
+            resources.join("horizon-resources.json").is_file()
+                && resources.join("assets/minecraft/sounds.json").is_file()
+        })
     }
 
     fn prepare_download(
@@ -612,6 +689,10 @@ impl Engine {
         }
         unreachable!("preparation returns after the final attempt")
     }
+}
+
+fn single_path_component(value: &str) -> bool {
+    !value.is_empty() && value != "." && value != ".." && !value.contains(['/', '\\', ':'])
 }
 
 /// Whether `version` names an immutable Nightly build (`nightly-YYYY-MM-DD[-commit]`).

@@ -3,7 +3,7 @@ use mcrslauncher::engine::Engine;
 use mcrslauncher::{
     engine::parse_login,
     github::{self, Asset, Release},
-    model::{Channel, Paths, Settings},
+    model::{Channel, Paths, Settings, UpdateCheckInterval},
 };
 use std::fs;
 #[cfg(unix)]
@@ -167,12 +167,49 @@ fn settings_are_atomic_and_corruption_is_reported() {
         root: temp.path().to_path_buf(),
     };
     let mut settings = Settings::default();
+    assert!(!settings.offline_mode);
     paths.save_settings(&settings).unwrap();
+    settings.offline_mode = true;
     settings.update_before_play = false;
     paths.save_settings(&settings).unwrap();
     assert!(!paths.load_settings().unwrap().update_before_play);
+    assert!(paths.load_settings().unwrap().offline_mode);
+    fs::write(paths.config(), r#"{"update_before_play":false}"#).unwrap();
+    assert!(!paths.load_settings().unwrap().offline_mode);
+    assert!(!paths.load_settings().unwrap().update_before_play);
     fs::write(paths.config(), "{broken").unwrap();
     assert!(paths.load_settings().is_err());
+}
+
+#[test]
+fn automatic_update_schedule_preserves_old_settings_and_respects_offline_mode() {
+    let old_disabled: Settings = serde_json::from_str(r#"{"auto_check":false}"#).unwrap();
+    assert!(old_disabled.automatic_update_interval().is_none());
+    let mut settings: Settings = serde_json::from_str(r#"{"auto_check":true}"#).unwrap();
+    assert_eq!(settings.automatic_update_interval().unwrap().as_secs(), 900);
+    settings.update_check_interval = UpdateCheckInterval::StartupOnly;
+    assert!(settings.auto_check);
+    assert!(settings.automatic_update_interval().is_none());
+
+    let temp = tempfile::tempdir().unwrap();
+    let paths = Paths {
+        root: temp.path().to_path_buf(),
+    };
+    for (interval, seconds) in [
+        (UpdateCheckInterval::Every30Minutes, 1800),
+        (UpdateCheckInterval::EveryHour, 3600),
+    ] {
+        settings.update_check_interval = interval;
+        paths.save_settings(&settings).unwrap();
+        let loaded = paths.load_settings().unwrap();
+        assert_eq!(loaded.update_check_interval, interval);
+        assert_eq!(
+            loaded.automatic_update_interval().unwrap().as_secs(),
+            seconds
+        );
+    }
+    settings.offline_mode = true;
+    assert!(settings.automatic_update_interval().is_none());
 }
 
 #[test]

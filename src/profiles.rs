@@ -190,6 +190,7 @@ fn load_head(
     client: &reqwest::blocking::Client,
     paths: &Paths,
     account: &Account,
+    offline: bool,
 ) -> Result<Vec<u8>> {
     let (cached, metadata) = cache_paths(paths, &account.uuid)?;
     if let (Ok(png), Ok(key)) = (fs::read(&cached), fs::read(&metadata))
@@ -198,6 +199,7 @@ fn load_head(
     {
         return Ok(head);
     }
+    ensure!(!offline, "Skin is not cached for offline use");
     let source = match &account.skin {
         Some((url, _)) => url.clone(),
         None => public_texture(client, &account.uuid)?,
@@ -297,7 +299,7 @@ fn upload_skin(
 }
 
 pub enum ProfileCommand {
-    Load(Vec<Account>),
+    Load(Vec<Account>, bool),
     Choose {
         uuid: String,
     },
@@ -352,12 +354,14 @@ impl ProfileWorker {
             };
             while let Ok(command) = inbox.recv() {
                 match command {
-                    ProfileCommand::Load(accounts) => {
+                    ProfileCommand::Load(accounts, offline) => {
                         for account in accounts {
                             if loaded.get(&account.uuid) == Some(&account.skin) {
                                 continue;
                             }
-                            if let Ok(rgba) = load_head(&engine.client, &engine.paths, &account) {
+                            if let Ok(rgba) =
+                                load_head(&engine.client, &engine.paths, &account, offline)
+                            {
                                 loaded.insert(account.uuid.clone(), account.skin);
                                 send(ProfileEvent::Head {
                                     uuid: account.uuid,

@@ -4,9 +4,12 @@ use eframe::egui::{
 use mcrslauncher::{
     engine::{self, Output},
     github::{self, Catalog},
-    model::{Account, BuildProfile, Channel, Paths, Receipt, Settings, Snapshot},
+    model::{
+        Account, BuildProfile, Channel, Paths, Receipt, Settings, Snapshot, UpdateCheckInterval,
+    },
     profiles::{ProfileCommand, ProfileEvent, ProfileWorker, SkinFile, SkinModel},
     progress::{TransferProgress, format_duration},
+    updater::{self, LauncherRelease, UpdateOutcome},
     worker::{Action, Event, Worker},
 };
 use std::{
@@ -57,6 +60,8 @@ pub struct Launcher {
     catalog: Option<Catalog>,
     catalog_channel: Channel,
     update_unavailable: Option<String>,
+    launcher_release: Option<LauncherRelease>,
+    launcher_update: Option<UpdateOutcome>,
     page: Page,
     busy: bool,
     stage: String,
@@ -90,7 +95,7 @@ impl Launcher {
                 Some(format!("Settings could not be loaded: {error:#}")),
             ),
         };
-        let pending_check = settings.auto_check;
+        let pending_check = settings.auto_check && !settings.offline_mode;
         let mut app = Self {
             worker: Worker::new(paths.clone(), cc.egui_ctx.clone()),
             profiles: ProfileWorker::new(paths.clone(), cc.egui_ctx.clone()),
@@ -99,6 +104,8 @@ impl Launcher {
             paths,
             catalog_channel: settings.channel,
             update_unavailable: None,
+            launcher_release: None,
+            launcher_update: None,
             settings,
             snapshot: Snapshot::default(),
             receipt: Receipt::default(),
@@ -137,6 +144,9 @@ impl Launcher {
             return;
         }
         let label = action.label().to_string();
+        if matches!(action, Action::CheckLauncherUpdate) {
+            self.launcher_release = None;
+        }
         match self.worker.start(action, self.settings.clone()) {
             Ok(()) => {
                 self.busy = true;
@@ -186,7 +196,9 @@ impl Launcher {
                 Event::Snapshot(snapshot) => {
                     let mut accounts = snapshot.accounts.clone();
                     accounts.sort_by_key(|account| !account.selected);
-                    let _ = self.profiles.send(ProfileCommand::Load(accounts));
+                    let _ = self
+                        .profiles
+                        .send(ProfileCommand::Load(accounts, self.settings.offline_mode));
                     self.snapshot = snapshot;
                 }
                 Event::Catalog(catalog) => {
@@ -197,6 +209,8 @@ impl Launcher {
                     self.last_check = Instant::now();
                 }
                 Event::UpdateUnavailable(message) => self.update_unavailable = Some(message),
+                Event::LauncherRelease(release) => self.launcher_release = Some(release),
+                Event::LauncherUpdated(outcome) => self.launcher_update = Some(outcome),
                 Event::Receipt(receipt) => self.receipt = receipt,
                 Event::Done(result) => {
                     self.busy = false;
@@ -277,17 +291,21 @@ impl Launcher {
             }
         }
         if !self.busy
+            && !self.settings.offline_mode
+            && self.settings.auto_check
             && (self.pending_check
-                || (self.settings.auto_check
-                    && self.last_check.elapsed() >= Duration::from_secs(900)))
+                || self
+                    .settings
+                    .automatic_update_interval()
+                    .is_some_and(|interval| self.last_check.elapsed() >= interval))
         {
             self.pending_check = false;
             self.last_check = Instant::now();
             self.start(Action::CheckUpdates);
         }
-        if self.settings.auto_check {
+        if let Some(interval) = self.settings.automatic_update_interval() {
             ctx.request_repaint_after(
-                Duration::from_secs(900)
+                interval
                     .saturating_sub(self.last_check.elapsed())
                     .max(Duration::from_secs(1)),
             );
@@ -649,7 +667,9 @@ impl Launcher {
                 self.play_button(ui);
                 ui.add_space(7.);
                 ui.label(
-                    RichText::new(if self.settings.update_before_play {
+                    RichText::new(if self.settings.offline_mode {
+                        "Offline · uses installed resources; single-player and offline servers"
+                    } else if self.settings.update_before_play {
                         "Checks for updates; uses the prepared installed build if unavailable"
                     } else {
                         "Using your locally installed game build"
@@ -662,7 +682,19 @@ impl Launcher {
     }
 
     fn play_button(&mut self, ui: &mut egui::Ui) {
-        let (label, action) = if !self.engine_ready() {
+        if ui
+            .add_enabled(
+                !self.busy,
+                egui::Checkbox::new(&mut self.settings.offline_mode, "Offline mode"),
+            )
+            .changed()
+        {
+            self.pending_check = false;
+            self.save();
+        }
+        let (label, action) = if self.settings.offline_mode {
+            ("Play offline  >", Action::Play)
+        } else if !self.engine_ready() {
             ("Set up Horizon", Action::Setup)
         } else if !self.snapshot.owner {
             ("Sign in to Minecraft", Action::SignIn)
@@ -687,7 +719,11 @@ impl Launcher {
                 ui.set_width((width - card().total_margin().sum().x).max(0.));
                 ui.label(RichText::new("MINECRAFT ACCOUNT").size(10.).color(MUTED));
                 ui.add_space(17.);
-                if let Some(account) = self
+                if self.settings.offline_mode {
+                    ui.label(RichText::new("Playing offline").size(17.).strong());
+                    ui.add_space(8.);
+                    ui.label(RichText::new("The game uses its local offline identity. Sign in online to use your Microsoft profile and authenticated servers.").size(12.).color(MUTED));
+                } else if let Some(account) = self
                     .snapshot
                     .accounts
                     .iter()
@@ -712,7 +748,13 @@ impl Launcher {
                         .size(12.)
                         .color(MUTED),
                     );
-                    if ui.button("Change skin").clicked() {
+                    if ui
+                        .add_enabled(
+                            !self.settings.offline_mode,
+                            egui::Button::new("Change skin"),
+                        )
+                        .clicked()
+                    {
                         self.edit_skin(account);
                     }
                 } else {
@@ -728,7 +770,7 @@ impl Launcher {
                     ui.add_space(14.);
                     if ui
                         .add_enabled(
-                            !self.busy,
+                            !self.busy && !self.settings.offline_mode,
                             egui::Button::new("Sign in with Microsoft")
                                 .min_size(egui::vec2(180., 36.)),
                         )
@@ -882,9 +924,11 @@ impl Launcher {
         title(
             ui,
             "Keep your world moving.",
-            "The latest engine, game builds, and everything that changed.",
+            "Updates for MCRS Launcher, the Horizon engine, and game builds.",
         );
         ui.add_space(22.);
+        self.launcher_updates(ui);
+        ui.add_space(16.);
         card().show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.horizontal_wrapped(|ui| {
@@ -897,7 +941,7 @@ impl Launcher {
                 if before != self.settings.channel {
                     self.catalog = None;
                     self.save();
-                    self.pending_check = true;
+                    self.pending_check = self.settings.auto_check;
                 }
                 if ui.add_enabled(!self.busy, egui::Button::new("Check now")).clicked() { self.start(Action::CheckUpdates); }
             });
@@ -956,6 +1000,69 @@ impl Launcher {
         }
     }
 
+    fn launcher_updates(&mut self, ui: &mut egui::Ui) {
+        card().show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.label(RichText::new("MCRS LAUNCHER").size(10.).color(ACCENT));
+            ui.label(format!("Running version: {}", env!("CARGO_PKG_VERSION")));
+            if updater::is_flatpak() {
+                ui.label("Update through your system software updater, then close and reopen MCRS. GitHub releases appear there after publication to the signed Flatpak repository.");
+                ui.horizontal_wrapped(|ui| {
+                    if ui.add_enabled(!self.busy && !self.settings.offline_mode, egui::Button::new("Open software updater")).clicked() {
+                        self.open(format!("appstream://{}", updater::FLATPAK_ID));
+                    }
+                    if ui.button("Copy Flatpak update command").clicked() {
+                        ui.ctx().copy_text(updater::FLATPAK_UPDATE_COMMAND.into());
+                        self.notice = "Update command copied. Run it in a terminal, then reopen MCRS.".into();
+                    }
+                });
+                ui.label(RichText::new(updater::FLATPAK_UPDATE_COMMAND).monospace().size(11.).color(MUTED));
+            } else if let Some(outcome) = self.launcher_update.clone() {
+                match outcome {
+                    UpdateOutcome::Installed(executable) => {
+                        ui.label(RichText::new("Update installed · restart to use it").color(GREEN));
+                        if ui.add_enabled(!self.busy, egui::Button::new("Restart launcher")).clicked() {
+                            match std::process::Command::new(executable).args(["--page", "updates"]).spawn() {
+                                Ok(_) => ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close),
+                                Err(error) => self.error = Some(format!("Could not restart MCRS. Close and reopen it: {error}")),
+                            }
+                        }
+                    }
+                    UpdateOutcome::Downloaded { binary, .. } => {
+                        ui.label("Verified update downloaded. Close MCRS, then replace its executable with this file.");
+                        ui.label(binary.display().to_string());
+                        if ui.button("Open update folder").clicked()
+                            && let Some(folder) = binary.parent() {
+                            self.open(folder);
+                        }
+                    }
+                }
+            }
+            if let Some(release) = self.launcher_release.clone() {
+                let newer = release.newer_than(env!("CARGO_PKG_VERSION")).unwrap_or(false);
+                ui.label(RichText::new(if newer { format!("Available: {}", release.tag) } else { format!("Latest release: {} · you're up to date", release.tag) }).color(if newer { ACCENT } else { GREEN }));
+                if newer && !updater::is_flatpak() && self.launcher_update.is_none() {
+                    if ui.add_enabled(!self.busy && !self.settings.offline_mode && release.asset.is_some(), egui::Button::new("Update MCRS Launcher")).clicked() {
+                        self.start(Action::InstallLauncherUpdate(Box::new(release.clone())));
+                    }
+                    if release.asset.is_none() { ui.label("No native update package is available for this platform. See Releases for downloads."); }
+                }
+                if !release.notes.is_empty() {
+                    ui.collapsing("Launcher release notes", |ui| { ui.label(release.notes.chars().take(8000).collect::<String>()); });
+                }
+            } else {
+                ui.label(RichText::new("Launcher updates are checked only when you request them.").size(11.).color(MUTED));
+            }
+            ui.horizontal_wrapped(|ui| {
+                if ui.add_enabled(!self.busy && !self.settings.offline_mode, egui::Button::new("Check launcher update")).clicked() {
+                    self.start(Action::CheckLauncherUpdate);
+                }
+                if ui.add_enabled(!self.settings.offline_mode, egui::Button::new("Open launcher releases")).clicked() { self.open(updater::RELEASES_URL); }
+            });
+            if self.settings.offline_mode { ui.label("Turn off Offline mode to check or download launcher updates."); }
+        });
+    }
+
     fn settings(&mut self, ui: &mut egui::Ui) {
         title(
             ui,
@@ -964,13 +1071,38 @@ impl Launcher {
         );
         ui.add_space(20.);
         let before = serde_json::to_string(&self.settings).unwrap_or_default();
+        let previous_update_checks = (
+            self.settings.auto_check,
+            self.settings.update_check_interval,
+        );
         card().show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.label(RichText::new("PERFORMANCE & UPDATES").size(10.).color(ACCENT));
             ui.add_space(12.);
+            ui.add_enabled(!self.busy, egui::Checkbox::new(&mut self.settings.offline_mode, "Offline mode"));
+            ui.label(RichText::new("Offline play needs an installed, prepared game. Downloads, sign-in, skin changes and mod builds require online mode.").size(11.).color(MUTED));
             ui.checkbox(&mut self.settings.minimize_on_play, "Minimize the launcher while playing");
-            ui.checkbox(&mut self.settings.auto_check, "Check for updates at startup and every 15 minutes");
-            ui.checkbox(&mut self.settings.update_before_play, "Install the newest build before playing");
+            ui.add_enabled_ui(!self.settings.offline_mode, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label("Automatic update checks");
+                    egui::ComboBox::from_id_salt("automatic_update_checks")
+                        .selected_text(if self.settings.auto_check { self.settings.update_check_interval.label() } else { "Never" })
+                        .show_ui(ui, |ui| {
+                            if ui.selectable_label(!self.settings.auto_check, "Never").clicked() {
+                                self.settings.auto_check = false;
+                                self.settings.update_before_play = false;
+                            }
+                            for interval in [UpdateCheckInterval::StartupOnly, UpdateCheckInterval::Every15Minutes, UpdateCheckInterval::Every30Minutes, UpdateCheckInterval::EveryHour] {
+                                if ui.selectable_label(self.settings.auto_check && self.settings.update_check_interval == interval, interval.label()).clicked() {
+                                    self.settings.auto_check = true;
+                                    self.settings.update_check_interval = interval;
+                                }
+                            }
+                        });
+                });
+                ui.checkbox(&mut self.settings.update_before_play, "Check for updates and install before playing");
+                ui.label(RichText::new("Never also turns off checks before playing. You can still check manually in Updates → Check now.").size(11.).color(MUTED));
+            });
             ui.add_space(12.);
             ui.horizontal_wrapped(|ui| {
                 ui.label("Native mod build profile");
@@ -984,6 +1116,15 @@ impl Launcher {
             ui.label(RichText::new("Performance is recommended for everyday play. Rebuild mods after changing this setting.").size(11.).color(MUTED));
         });
         if before != serde_json::to_string(&self.settings).unwrap_or_default() {
+            self.pending_check = false;
+            if previous_update_checks
+                != (
+                    self.settings.auto_check,
+                    self.settings.update_check_interval,
+                )
+            {
+                self.last_check = Instant::now();
+            }
             self.save();
         }
         ui.add_space(16.);
@@ -997,14 +1138,14 @@ impl Launcher {
                     ui.label(RichText::new(&account.name).strong());
                     if account.selected { badge(ui, "ACTIVE", GREEN); }
                     ui.horizontal_wrapped(|ui| {
-                        if ui.button("Change skin").clicked() { self.edit_skin(account.clone()); }
+                        if ui.add_enabled(!self.settings.offline_mode, egui::Button::new("Change skin")).clicked() { self.edit_skin(account.clone()); }
                         if ui.add_enabled(!self.busy, egui::Button::new("Sign out")).clicked() { self.start(Action::SignOut(account.uuid.clone())); }
                         if !account.selected && ui.add_enabled(!self.busy, egui::Button::new("Use account")).clicked() { self.start(Action::SelectAccount(account.uuid.clone())); }
                     });
                 });
                 ui.add_space(8.);
             }
-            if ui.add_enabled(!self.busy, egui::Button::new("Sign in with Microsoft")).clicked() { self.start(Action::SignIn); }
+            if ui.add_enabled(!self.busy && !self.settings.offline_mode, egui::Button::new("Sign in with Microsoft")).clicked() { self.start(Action::SignIn); }
             if self.engine_ready() && !self.snapshot.sign_in_configured {
                 ui.label(RichText::new("This engine has no Microsoft application ID configured. Use an official release, or set HORIZON_MSA_CLIENT_ID before starting MCRS.").size(11.).color(ACCENT));
             }
@@ -1233,7 +1374,10 @@ impl Launcher {
                     } else {
                         "Apply skin"
                     },
-                    editor.skin.is_some() && !editor.uploading && !editor.choosing,
+                    editor.skin.is_some()
+                        && !editor.uploading
+                        && !editor.choosing
+                        && !self.settings.offline_mode,
                 )
                 .clicked()
                     && let Some(skin) = editor.skin.clone()

@@ -43,7 +43,7 @@ Use `--page mods`, `--page updates`, or `--page settings` to open a page directl
 - Actual Minecraft skin heads, cached locally with their hat layer. **Change skin** opens a PNG picker and applies classic or slim skins to the signed-in Java Edition account.
 - GitHub native mod import from repository, branch, commit or release URLs; incremental builds, source links, removal with rebuilding, and explicit trust before importing new mod source.
 - Separate engine and game release discovery. Nightly is selected by default; immutable `nightly-<date>-<commit>` versions and asset digests detect new builds even when the GitHub tag stays `nightly`.
-- Startup and 15-minute update checks; update before play is enabled by default. Stable channel and manual checks are available.
+- Configurable automatic update checks: never, startup only, or startup plus every 15 minutes, 30 minutes, or hour. Checks every 15 minutes and updates before play are enabled by default. Stable channel and manual checks are available.
 - Native Rust rendering, idle rendering suspension, bounded process logs, background I/O and compilation, cancellation of process trees, and optional minimization during play.
 - Performance, release (thin LTO), and development build profiles. Performance is the default for fast incremental rebuilds without the development profile's game slowdown.
 
@@ -51,9 +51,19 @@ Only **Horizon native mods** are imported by this launcher. Java/Fabric/Forge `.
 
 ## Updates and offline use
 
+The **MCRS Launcher** card in Updates checks for updates to this application separately from Horizon. Select **Check launcher update**, then **Update MCRS Launcher** when a newer release is available. Native Linux and macOS installations download the matching official package, verify GitHub's SHA-256 digest, and atomically replace the executable; select **Restart launcher** to use it. Cancellation or a failed download leaves the current executable intact. Windows and installations without write permission retain the verified executable in the data folder and offer **Open update folder** for manual replacement after closing MCRS.
+
+Flatpak installations offer **Open software updater** and a copyable `flatpak update io.github.marktible.MCRSLauncher` command. They use the signed repository and keep the Flatpak sandbox permissions. A GitHub release may precede publication to that repository. Standalone bundle installations need to switch to the remote as described in the [Flatpak guide](docs/flatpak.md). Launcher checks are manual and disabled in Offline mode; they do not change the automatic Horizon check preferences.
+
+Choose **Settings → Automatic update checks** to control startup and background checks. **Never** also turns off **Check for updates and install before playing**, so updating is manual through **Updates → Check now** and **Install latest build**. Checks before playing can be enabled separately. Changing the frequency restarts the timer, and your choice is saved across launches.
+
 **Updates** shows the chosen channel, latest game and engine builds, and release notes. **Install latest build** verifies the upstream game's signed checksums through Horizon's installer. The engine itself is checked against the SHA-256 digest published by the GitHub Releases API and verified locally before use. Unsigned source builds are never substituted for official releases.
 
-For an installed and prepared game, turn off **Install the newest build before playing** in Settings to launch without a GitHub update check. Account renewal and cached ownership handling remain Horizon's responsibility. Turning off startup checks also prevents automatic GitHub checks. Failed checks leave the installed game intact and report the error.
+Enable **Offline mode** on Play or in Settings to start an installed, prepared game directly without Microsoft sign-in, account renewal, update checks, downloads, or mod builds. The preference persists across restarts. Cached skin heads remain available; skin changes and other online actions require turning offline mode off. Your online update preferences are kept for when you reconnect.
+
+Offline play uses the selected instance's game folder and build, with the game's local offline identity and no Microsoft session. It supports single-player and offline-mode servers; authenticated servers require online play. Install and prepare the game online first. Missing resources or pending mod changes produce an error explaining that an online preparation or build is needed; offline mode never downloads them or silently launches an older mod set.
+
+For online play without a GitHub update check, turn off **Install the newest build before playing** in Settings. Account renewal and cached ownership handling then remain Horizon's responsibility. Failed checks leave the installed game intact and report the error.
 
 Game updates rebuild installed native mods only when the base build changes or a native build is missing. The exact build base is prepared before compilation; game updates use their catalog version, and ordinary rebuilds retain the existing native revision. Mod source updates require a separate trust confirmation. Resource preparation is skipped once the target build has both its resource manifest and sound resources.
 
