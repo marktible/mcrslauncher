@@ -25,6 +25,12 @@
   <url type="bugtracker">https://github.com/marktible/mcrslauncher/issues</url>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.2.7" date="2026-11-14">
+      <description>
+        <p>Use all available CPU cores for native mod compilation by default, while preserving explicit CARGO_BUILD_JOBS limits.</p>
+        <p>Add offline play, configurable automatic Horizon update checks, and launcher updates for native installations.</p>
+      </description>
+    </release>
     <release version="0.2.6" date="2026-11-09">
       <description><p>Retry engine downloads through GitHub's release-asset API when the normal download endpoint returns a gateway error, and let Play continue with the verified installed build when an update cannot be downloaded.</p></description>
     </release>

@@ -452,12 +452,20 @@ test "$1" = play
                     .paths
                     .engine_home()
                     .join("versions/native-test/.local/horizon-client/26.3")
+                    .canonicalize()
+                    .unwrap()
                     .display()
             )
         );
         assert_eq!(
             fs::read_to_string(engine.paths.game_home().join("offline-home")).unwrap(),
-            engine.paths.game_home().to_str().unwrap()
+            engine
+                .paths
+                .game_home()
+                .canonicalize()
+                .unwrap()
+                .to_str()
+                .unwrap()
         );
         assert!(!engine.paths.engine_home().join("commands").exists());
     }

@@ -1,5 +1,13 @@
 # Validation — 2026-11-04
 
+## Release 0.2.7 — 2026-11-14
+
+Native builds now receive `CARGO_BUILD_JOBS` equal to the available CPU count unless the caller explicitly sets it. The subprocess regression test checks performance, release, and development profiles; it passes both with the default environment and with `CARGO_BUILD_JOBS=2`.
+
+All 59 tests pass, including a full run with a symlinked `TMPDIR`. That run reproduced an offline-play assertion failure before correcting the expected resource and game-home paths to their canonical forms, as used by the actual child process. This handles macOS's symlinked temporary directories. Formatting, Clippy with warnings denied, and the Flatpak Cargo source-lock check pass.
+
+Built version 0.2.7 in release mode and packaged a local Flatpak without installing it. AppStream metadata validation, the executable smoke test in the Freedesktop SDK 26.08 runtime, and C/ALSA/libudev prerequisite checks passed. GitHub's release workflow separately validates and packages all desktop platforms and Flatpak before publication.
+
 ## Launcher update controls — 2026-11-11
 
 Added manual MCRS release checks, platform package selection, verified native downloads, atomic executable replacement on Unix, and a restart action. Windows and unwritable installations keep a verified download for manual replacement. Flatpak delegates to the system software updater and provides a copyable update command; no additional sandbox permissions are requested. Horizon's automatic-check preferences remain separate.
