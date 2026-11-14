@@ -162,7 +162,13 @@ impl Launcher {
         if matches!(action, Action::CheckLauncherUpdate) {
             self.launcher_release = None;
         }
-        match self.worker.start(action, self.settings.clone()) {
+        let mut settings = self.settings.clone();
+        // Setup is an explicit download request, including for a locally selected
+        // offline profile. Keep the saved offline-play preference unchanged.
+        if matches!(action, Action::Setup) {
+            settings.offline_mode = false;
+        }
+        match self.worker.start(action, settings) {
             Ok(()) => {
                 self.busy = true;
                 self.stage = label;
@@ -694,7 +700,9 @@ impl Launcher {
                 self.play_button(ui);
                 ui.add_space(7.);
                 ui.label(
-                    RichText::new(if self.settings.offline_mode || !self.snapshot.owner {
+                    RichText::new(if !self.snapshot.resources_ready {
+                        "Setup downloads everything needed · no Microsoft account or Minecraft installation required"
+                    } else if self.settings.offline_mode || !self.snapshot.owner {
                         "Offline · uses installed resources; single-player and offline servers"
                     } else if self.settings.update_before_play {
                         "Checks for updates; uses the prepared installed build if unavailable"
@@ -709,8 +717,8 @@ impl Launcher {
     }
 
     fn play_button(&mut self, ui: &mut egui::Ui) {
-        let (label, action) = if !self.engine_ready() {
-            ("Set up Horizon", Action::Setup)
+        let (label, action) = if !self.engine_ready() || !self.snapshot.resources_ready {
+            ("Download & set up Horizon", Action::Setup)
         } else if self.settings.offline_mode || !self.snapshot.owner {
             ("Play offline  >", Action::Play)
         } else {
@@ -1243,7 +1251,7 @@ impl Launcher {
             ui.label(RichText::new("PERFORMANCE & UPDATES").size(10.).color(ACCENT));
             ui.add_space(12.);
             ui.add_enabled(!self.busy, egui::Checkbox::new(&mut self.settings.offline_mode, "Offline mode"));
-            ui.label(RichText::new("Offline play needs an installed, prepared game. Downloads, sign-in, skin changes and mod builds require online mode.").size(11.).color(MUTED));
+            ui.label(RichText::new("Offline play reuses prepared files. Download & set up Horizon fetches missing files when requested, without signing in.").size(11.).color(MUTED));
             ui.checkbox(&mut self.settings.minimize_on_play, "Minimize the launcher while playing");
             ui.add_enabled_ui(!self.settings.offline_mode, |ui| {
                 ui.horizontal_wrapped(|ui| {
@@ -1361,7 +1369,7 @@ impl Launcher {
                     .clicked()
                 {
                     // Setup repairs a missing/modified binary using the trusted release digest.
-                    self.start(Action::Setup);
+                    self.start(Action::RepairEngine);
                 }
             });
         });

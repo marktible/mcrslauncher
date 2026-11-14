@@ -337,6 +337,9 @@ impl Engine {
             }
         }
         Ok(Snapshot {
+            resources_ready: selected_version
+                .as_deref()
+                .is_some_and(|version| self.resources_ready(version)),
             accounts: profiles,
             sign_in_configured: accounts["sign_in_configured"].as_bool().unwrap_or(false),
             owner: accounts["owner"].as_bool().unwrap_or(false),
@@ -539,7 +542,12 @@ impl Engine {
         let version = snapshot
             .selected_version
             .context("Install Horizon before playing")?;
-        self.prepare_version(&version, report)
+        self.prepare_version(&version, report)?;
+        ensure!(
+            self.resources_ready(&version),
+            "Resource preparation did not finish all required files. Select Download & set up Horizon to retry."
+        );
+        Ok(())
     }
 
     pub fn can_play_installed(&self) -> Result<bool> {
@@ -618,6 +626,14 @@ impl Engine {
         if self.resources_ready(version) {
             return Ok(());
         }
+        ensure!(single_path_component(version), "Unsafe game version");
+        crate::resources::prepare(
+            &self.client,
+            &self.paths.engine_home(),
+            &self.paths.engine_home().join("versions").join(version),
+            &self.cancel,
+            report,
+        )?;
         self.prepare_download(
             version,
             report,
@@ -656,7 +672,7 @@ impl Engine {
         for attempt in 0..=retry_delays.len() {
             self.check_cancel()?;
             report(Output::Stage(if attempt == 0 {
-                "Preparing Minecraft resources for your account".into()
+                "Preparing game resources · no sign-in required".into()
             } else {
                 format!(
                     "Resuming Minecraft preparation · attempt {} of {}",
@@ -664,8 +680,12 @@ impl Engine {
                     retry_delays.len() + 1
                 )
             }));
+            let minecraft = self.paths.engine_home().join("minecraft");
+            let minecraft = minecraft
+                .to_str()
+                .context("The resources folder is not valid UTF-8")?;
             let error = match self.run(
-                &["prepare", "--download", "--version", version],
+                &["prepare", "--minecraft", minecraft, "--version", version],
                 report,
                 false,
             ) {
@@ -860,7 +880,10 @@ printf '%s\n' "$@" > "$HORIZON_LAUNCHER_HOME/resumed-arguments""#,
             .unwrap();
         assert_eq!(
             fs::read_to_string(engine.paths.engine_home().join("resumed-arguments")).unwrap(),
-            "prepare\n--download\n--version\ntest\n"
+            format!(
+                "prepare\n--minecraft\n{}\n--version\ntest\n",
+                engine.paths.engine_home().join("minecraft").display()
+            )
         );
         assert!(events.into_inner().unwrap().iter().any(
             |event| matches!(event, Output::Stage(stage) if stage.contains("attempt 2 of 2"))

@@ -329,6 +329,9 @@ fi
 "#
     );
     let (directory, engine) = fake_engine(&(prefix + script));
+    for version in installed {
+        seed_resource_cache(&engine.paths, version);
+    }
     for version in prepared {
         let base = engine.paths.engine_home().join("versions").join(version);
         let resources = base.join(".local/horizon-client/26.3");
@@ -342,6 +345,32 @@ fi
         fs::write(resources.join("assets/minecraft/sounds.json"), "{}").unwrap();
     }
     (directory, engine)
+}
+
+#[cfg(unix)]
+fn seed_resource_cache(paths: &Paths, version: &str) {
+    use sha1::{Digest, Sha1};
+    let home = paths.engine_home();
+    let cache = home.join("minecraft");
+    let index = br#"{"objects":{}}"#;
+    let checksum = |bytes: &[u8]| format!("{:x}", Sha1::digest(bytes));
+    let manifest = serde_json::json!({"id":"26.3", "libraries":[],
+        "downloads":{"client":{"url":"https://piston-data.mojang.com/client", "sha1":checksum(b"client"),"size":6},
+        "server":{"url":"https://piston-data.mojang.com/server","sha1":checksum(b"server"),"size":6}},
+        "assetIndex":{"id":"test","url":"https://piston-meta.mojang.com/index","sha1":checksum(index),"size":index.len()}});
+    let manifest = serde_json::to_vec(&manifest).unwrap();
+    for (path, bytes) in [
+        (cache.join("versions/26.3/26.3.jar"), b"client".as_slice()),
+        (home.join("server-jars/26.3.jar"), b"server".as_slice()),
+        (cache.join("versions/26.3/26.3.json"), manifest.as_slice()),
+        (cache.join("assets/indexes/test.json"), index.as_slice()),
+    ] {
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, bytes).unwrap();
+    }
+    let game = home.join("versions").join(version);
+    fs::create_dir_all(&game).unwrap();
+    fs::write(game.join("research-lock.json"), serde_json::json!({"minecraft":{"version":"26.3","manifest_sha1":checksum(&manifest),"client_sha1":checksum(b"client"),"server_sha1":checksum(b"server")}}).to_string()).unwrap();
 }
 
 #[cfg(unix)]
@@ -467,7 +496,7 @@ fn native_build_uses_requested_profile_and_clears_pending_changes_on_success() {
 fn native_build_prepares_the_new_base_before_compiling_and_leaves_selection_to_upstream() {
     let script = r#"case "$1" in
 prepare)
-    printf '%s' "$4" > "$HORIZON_LAUNCHER_HOME/prepared"
+    printf '%s' "$5" > "$HORIZON_LAUNCHER_HOME/prepared"
     printf 'prepare\n' >> "$HORIZON_LAUNCHER_HOME/order";;
 native-build)
     test "$2" = --version || exit 3

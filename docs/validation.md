@@ -1,5 +1,11 @@
 # Validation — 2026-11-04
 
+## Account-free first-time setup — 2026-11-14
+
+First-time setup now downloads the files pinned by the installed game's research lock directly from Mojang, validates checksums and sizes, and prepares resources using an application-managed Minecraft layout. No credentials or another launcher's files are needed. The public download cache is reused, failed files cannot replace a verified file, and independent downloads run with bounded concurrency. Explicit setup is available for a selected offline profile without changing its saved offline-play preference.
+
+All 65 default tests pass, including the new downloader and complete setup dispatch fixtures. The opt-in `fresh_setup_without_an_account_or_existing_minecraft` test also passed against the actual official Horizon engine and Nightly game in an isolated, initially empty folder: it downloaded about 592 MiB of client resources and libraries, created a preparation workspace of about 1.1 GiB, confirmed zero accounts and no owner, and ran preparation again successfully. That test completed in about 99 seconds on this machine and did not launch gameplay. Formatting, Clippy and the generated Flatpak Cargo source-lock check pass.
+
 ## Offline accounts and account switching — 2026-11-14
 
 Play and Settings now provide a menu for Guest, saved offline names, and Microsoft accounts. Offline profiles are validated, created, selected, persisted, and removed locally without changing Horizon's credential store. Signed-out Play uses the prepared client directly without an account gate, update lookup, or authentication request. Named profiles use the client's `--name` option, confirmed against the installed 2026-11-13 game's own help output.

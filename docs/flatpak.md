@@ -54,7 +54,7 @@ The manifest uses a local directory source so a private repository can be built 
 
 The application uses **org.freedesktop.Sdk 26.08** as its runtime. This includes a C compiler, C library headers, `pkg-config`, and ALSA/libudev development files. Horizon downloads its own pinned Rust toolchain, but needs those C build prerequisites to compile native mods. Using the SDK keeps that compilation inside the sandbox and avoids depending on compilers installed on the host. The SDK is a larger shared download on first install; it does not add a browser runtime to the launcher or change its UI rendering.
 
-Permissions are limited to networking, display access, graphics acceleration, audio, IPC and the Secret Service keychain. The package does not grant host command execution or blanket access to the host home directory. URLs open using the desktop portal. Minecraft resources can be downloaded by Horizon for the signed-in account, so access to a host `.minecraft` folder is unnecessary.
+Permissions are limited to networking, display access, graphics acceleration, audio, IPC and the Secret Service keychain. The package does not grant host command execution or blanket access to the host home directory. URLs open using the desktop portal. Initial setup downloads and verifies the pinned resources from Mojang into application data without signing in or accessing a host `.minecraft` folder.
 
 The skin PNG chooser uses the desktop file-selection portal. Picking a file grants access to that file without adding broad filesystem permissions. The game-folder shortcut opens the selected instance's own directory through the desktop opener.
 

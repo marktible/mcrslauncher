@@ -20,9 +20,9 @@ cargo run --release --locked
 
 On Linux, the launcher uses the system's OpenGL and X11 or Wayland libraries. The game additionally needs Horizon's [platform requirements](https://playhorizon.dev). On Windows, build using the Rust MSVC toolchain and Visual Studio C++ build tools. macOS builds use Xcode command line tools.
 
-1. Select **Set up Horizon**. MCRS downloads the current official Horizon launcher engine, checks its GitHub SHA-256 digest, and installs only its executable.
-2. Select **Sign in with Microsoft**. Enter the displayed device code in Microsoft's website using an account that owns Minecraft: Java Edition. No passwords are collected by MCRS.
-3. Select **Play Horizon**. The latest Nightly game is installed, the matching Minecraft resources are prepared from Mojang for your account, and the game starts. Horizon manages any Java runtime needed for preparation.
+1. Select **Download & set up Horizon**. MCRS installs the verified official engine and game, downloads the matching game files, libraries, sounds, fonts, and languages directly from Mojang, and prepares them locally. No Microsoft account, Minecraft installation, or other launcher is needed. Horizon manages any Java runtime needed for preparation.
+2. Select **Guest** or create an offline profile in the account menu, then select **Play offline**. The resources downloaded during setup are reused.
+3. Optionally select **Microsoft sign-in** to play authenticated servers under your Microsoft profile. Enter the displayed code in Microsoft's website; no passwords are collected by MCRS.
 4. In **Mods**, paste a compatible GitHub repository URL, review and trust its native source, then select **Import & build**. Horizon installs its pinned source and toolchain, builds the mods, and selects the resulting game for play.
 
 The first resource preparation or native mod build can take several minutes and several GB of storage. Subsequent launches reuse prepared resources and builds.
@@ -66,7 +66,7 @@ Enable **Offline mode** on Play or in Settings to start an installed, prepared g
 
 No account is required to play an installed, prepared build: signed-out Play automatically starts as Guest or the last selected offline profile, even when the Offline mode checkbox is off. **Create offline account** saves a name of 3–16 letters, digits, or underscores and selects it immediately. The account menu switches between Guest, saved offline profiles, and optional Microsoft accounts. Settings can remove offline profiles without deleting worlds or other game files. Names are stored locally in `settings.json` and passed directly to the game with `--name`.
 
-Offline play uses the selected instance's game folder and build, with no Microsoft session. It supports single-player and offline-mode servers; authenticated servers require a Microsoft account. Install and prepare the game resources first; signing in is needed if downloading Minecraft resources for your account. Missing resources or pending mod changes produce an error explaining that preparation or a build is needed; offline mode never downloads them or silently launches an older mod set.
+Offline play uses the selected instance's game folder and build, with no Microsoft session. It supports single-player and offline-mode servers; authenticated servers require a Microsoft account. **Download & set up Horizon** installs and prepares resources automatically even for a newly created offline profile. Setup is an explicit download request and keeps the saved offline-play preference unchanged. Ordinary offline Play reuses prepared files and never downloads them or silently launches an older mod set.
 
 For online play without a GitHub update check, turn off **Install the newest build before playing** in Settings. Account renewal and cached ownership handling then remain Horizon's responsibility. Failed checks leave the installed game intact and report the error.
 
@@ -105,7 +105,13 @@ cargo build --release --locked
 The opt-in live contract test downloads the official engine and current Nightly game into a temporary folder, verifies their checksums, and exercises the actual CLI's account, installation and version JSON interfaces. It does not sign in, download Minecraft assets, or launch the game:
 
 ```sh
-cargo test --locked --test upstream -- --ignored --nocapture
+cargo test --locked --test upstream official_engine_and_latest_nightly_contract -- --ignored --nocapture
+```
+
+The separate opt-in first-run test also downloads the pinned Minecraft resources, prepares them with no account, and verifies reuse. It needs network access and several GB of working space:
+
+```sh
+cargo test --locked --test upstream fresh_setup_without_an_account_or_existing_minecraft -- --ignored --nocapture
 ```
 
 `src/github.rs` owns release discovery and verified engine extraction. `src/engine.rs` is the typed subprocess bridge. `src/worker.rs` serializes game operations away from the UI thread. `src/progress.rs` observes the installer's archive file instead of relying on terminal-only progress output. `src/profiles.rs` caches public skins and handles the file chooser and skin upload independently of downloads. `src/ui.rs` implements the desktop interface. Logs are capped at 500 displayed lines and 128 KiB of captured output per process stream.
@@ -118,6 +124,6 @@ See [validation notes](docs/validation.md) for the checks actually completed, pe
 
 ## License and attribution
 
-MCRS Launcher is MIT licensed. Horizon is a separate, MIT-licensed upstream project by its contributors. Its executable is downloaded from official GitHub releases on first setup; it is not bundled here. Dependencies retain their own licenses. Minecraft code and assets are never included in this repository. An eligible Minecraft account is required to obtain and prepare them.
+MCRS Launcher is MIT licensed. Horizon is a separate, MIT-licensed upstream project by its contributors. Its executable is downloaded from official GitHub releases on first setup; it is not bundled here. Dependencies retain their own licenses. Minecraft code and assets are not bundled in this repository: setup fetches the version pinned by Horizon directly from Mojang's public download servers and verifies its checksums. Microsoft sign-in is optional and is used for authenticated Minecraft services.
 
 Unofficial software. Not approved by or associated with Mojang or Microsoft.

@@ -254,6 +254,7 @@ pub struct Snapshot {
     pub selected_version: Option<String>,
     pub mods: Vec<Mod>,
     pub native_build: bool,
+    pub resources_ready: bool,
     pub game_home: PathBuf,
 }
 

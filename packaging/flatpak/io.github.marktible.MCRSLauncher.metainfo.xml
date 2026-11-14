@@ -15,7 +15,7 @@
       <li>Install current Horizon builds and check for updates.</li>
       <li>Import native Horizon mods from GitHub and compile them inside the sandbox.</li>
     </ul>
-    <p>Native mod builds use the Freedesktop SDK runtime's compiler and development libraries. The initial setup downloads Horizon and its required game resources.</p>
+    <p>Native mod builds use the Freedesktop SDK runtime's compiler and development libraries. First-time setup downloads Horizon and its required game resources automatically, without a Microsoft account, Minecraft installation, or other launcher.</p>
     <p>Unofficial software. Not affiliated with Mojang or Microsoft. Minecraft assets are not included.</p>
   </description>
   <launchable type="desktop-id">io.github.marktible.MCRSLauncher.desktop</launchable>
@@ -25,6 +25,12 @@
   <url type="bugtracker">https://github.com/marktible/mcrslauncher/issues</url>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.2.9" date="2026-11-14">
+      <description>
+        <p>Download and prepare all required game resources automatically on a fresh machine, without Microsoft sign-in or an existing Minecraft installation.</p>
+        <p>Verify Mojang's checksums and reuse completed downloads after interruptions.</p>
+      </description>
+    </release>
     <release version="0.2.8" date="2026-11-14">
       <description>
         <p>Add an account menu, saved offline profiles, and Guest play without required Microsoft sign-in.</p>

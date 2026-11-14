@@ -21,6 +21,7 @@ pub enum Action {
     CheckLauncherUpdate,
     InstallLauncherUpdate(Box<LauncherRelease>),
     Setup,
+    RepairEngine,
     SignIn,
     SignOut(String),
     SelectAccount(String),
@@ -41,6 +42,7 @@ impl Action {
             Self::CheckLauncherUpdate => "Checking for MCRS Launcher updates",
             Self::InstallLauncherUpdate(_) => "Updating MCRS Launcher",
             Self::Setup => "Setting up Horizon",
+            Self::RepairEngine => "Restoring the Horizon engine",
             Self::SignIn => "Signing in with Microsoft",
             Self::SignOut(_) => "Signing out",
             Self::SelectAccount(_) => "Switching account",
@@ -167,13 +169,12 @@ fn execute_with_catalog(
 ) -> Result<String> {
     // Signed-out users can play a prepared installation as a local player without
     // enabling Offline mode first or starting a sign-in/update request.
-    if matches!(action, Action::Play)
-        && !settings.offline_mode
-        && engine.paths.engine().exists()
-        && !engine.snapshot()?.owner
-    {
-        engine.play_offline(settings, report)?;
-        return Ok("Offline game closed".into());
+    if matches!(action, Action::Play) && !settings.offline_mode && engine.paths.engine().exists() {
+        let snapshot = engine.snapshot()?;
+        if !snapshot.owner && snapshot.resources_ready && !engine.receipt().mods_dirty {
+            engine.play_offline(settings, report)?;
+            return Ok("Offline game closed".into());
+        }
     }
     if settings.offline_mode {
         match action {
@@ -234,7 +235,11 @@ fn execute_with_catalog(
                 return Ok("Update check unavailable · installed builds are kept".into());
             }
         },
-        Action::Setup | Action::SignIn | Action::InstallGame | Action::Play => {
+        Action::Setup
+        | Action::RepairEngine
+        | Action::SignIn
+        | Action::InstallGame
+        | Action::Play => {
             if !matches!(action, Action::Play)
                 || settings.update_before_play
                 || !engine.paths.engine().exists()
@@ -244,7 +249,8 @@ fn execute_with_catalog(
                     Ok(catalog) => {
                         send(Event::Catalog(Box::new(catalog.clone())));
                         let update = engine.ensure_engine(&catalog, report).and_then(|_| {
-                            if matches!(action, Action::InstallGame | Action::Play) {
+                            if matches!(action, Action::Setup | Action::InstallGame | Action::Play)
+                            {
                                 engine.install_game(&catalog, settings, true, report)
                             } else {
                                 Ok(())
@@ -286,10 +292,14 @@ fn execute_with_catalog(
                 }
             }
             engine.verify_local_engine()?;
-            if matches!(action, Action::Setup) {
+            if matches!(action, Action::RepairEngine) {
                 return Ok(
                     "Horizon engine is ready. Install and prepare game resources to play.".into(),
                 );
+            }
+            if matches!(action, Action::Setup | Action::InstallGame) {
+                engine.prepare(report)?;
+                return Ok("Horizon is ready. Play as Guest or an offline profile; no Microsoft sign-in is required.".into());
             }
             if matches!(action, Action::SignIn) {
                 engine.run(&["account", "sign-in"], report, false)?;
@@ -297,10 +307,6 @@ fn execute_with_catalog(
             }
             if matches!(action, Action::Play) {
                 let snapshot = engine.snapshot()?;
-                if !snapshot.owner {
-                    engine.play_offline(settings, report)?;
-                    return Ok("Offline game closed".into());
-                }
                 if engine.receipt().mods_dirty {
                     if snapshot.mods.is_empty() {
                         engine.restore_base(report)?;
@@ -309,6 +315,10 @@ fn execute_with_catalog(
                     }
                 }
                 engine.prepare(report)?;
+                if !snapshot.owner {
+                    engine.play_offline(settings, report)?;
+                    return Ok("Offline game closed".into());
+                }
                 report(Output::Stage("Horizon is running".into()));
                 report(Output::Playing);
                 engine.run(&["play"], report, false)?;
@@ -480,6 +490,94 @@ test "$1" = play
                 .unwrap()
         );
         assert!(!engine.paths.engine_home().join("commands").exists());
+    }
+
+    #[test]
+    fn setup_installs_and_prepares_without_a_microsoft_account_or_other_launcher() {
+        let (_temporary, engine) = installed(false, false, false);
+        crate::resources::fixture(
+            &engine.paths.engine_home(),
+            &engine.paths.engine_home().join("versions/v1.0.0"),
+        );
+        let script = r#"#!/bin/sh
+if [ "$1" = --json ]; then
+    case "$2" in
+        account) printf '%s\n' '{"accounts":[],"owner":false,"sign_in_configured":true}';;
+        versions) if [ -f "$HORIZON_LAUNCHER_HOME/installed" ]; then printf '%s\n' '{"installed":["v1.0.0"],"selected":"v1.0.0"}'; else printf '%s\n' '{"installed":[],"selected":null}'; fi;;
+        instance) printf '[]\n';;
+    esac
+    exit 0
+fi
+printf '%s\n' "$@" >> "$HORIZON_LAUNCHER_HOME/setup-commands"
+case "$1" in
+    install) touch "$HORIZON_LAUNCHER_HOME/installed";;
+    settings) :;;
+    prepare)
+        test "$2" = --minecraft || exit 8
+        base="$HORIZON_LAUNCHER_HOME/versions/v1.0.0/.local/horizon-client/26.3"
+        mkdir -p "$base/assets/minecraft"
+        printf '{}' > "$base/horizon-resources.json"
+        printf '{}' > "$base/assets/minecraft/sounds.json";;
+    *) exit 9;;
+esac
+"#;
+        fs::write(engine.paths.engine(), script).unwrap();
+        let digest = format!("sha256:{}", "a".repeat(64));
+        let receipt = Receipt {
+            tag: "engine-test".into(),
+            digest: digest.clone(),
+            executable_sha256: github::digest_hex(script.as_bytes()),
+            ..Receipt::default()
+        };
+        model::atomic_write(
+            &engine.paths.receipt(),
+            &serde_json::to_vec(&receipt).unwrap(),
+        )
+        .unwrap();
+        let asset = github::Asset {
+            name: "test".into(),
+            browser_download_url: String::new(),
+            url: None,
+            size: 1,
+            digest: Some(digest),
+            updated_at: String::new(),
+        };
+        let release = github::Release {
+            tag_name: "engine-test".into(),
+            name: String::new(),
+            body: String::new(),
+            published_at: None,
+            prerelease: false,
+            draft: false,
+            assets: vec![asset.clone()],
+        };
+        let mut game = release.clone();
+        game.tag_name = "v1.0.0".into();
+        let catalog = Catalog {
+            engine: release,
+            engine_asset: asset.clone(),
+            game,
+            game_asset: asset,
+        };
+        execute_with_catalog(
+            &engine,
+            &Action::Setup,
+            &Settings::default(),
+            &|_| {},
+            &|_| {},
+            &|| Ok(catalog.clone()),
+        )
+        .unwrap();
+        let commands =
+            fs::read_to_string(engine.paths.engine_home().join("setup-commands")).unwrap();
+        assert!(commands.contains("install\nv1.0.0\n"));
+        assert!(commands.contains("prepare\n--minecraft\n"));
+        assert!(!commands.contains("account"));
+        assert!(!commands.contains("--download"));
+        let snapshot = engine.snapshot().unwrap();
+        assert!(snapshot.resources_ready);
+        assert!(!snapshot.owner);
+        assert!(snapshot.accounts.is_empty());
     }
 
     #[test]
