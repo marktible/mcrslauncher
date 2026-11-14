@@ -193,6 +193,16 @@ impl Engine {
             .args(args)
             .env("HORIZON_LAUNCHER_HOME", self.paths.engine_home())
             .env("HORIZON_HOME", self.paths.game_home());
+        // Horizon preserves this variable when starting its managed Cargo toolchain.
+        // Use every available core unless the user explicitly limits build parallelism.
+        if args.first() == Some(&"native-build") && std::env::var_os("CARGO_BUILD_JOBS").is_none() {
+            command.env(
+                "CARGO_BUILD_JOBS",
+                thread::available_parallelism()
+                    .map_or(1, |cores| cores.get())
+                    .to_string(),
+            );
+        }
         self.run_command(command, report, quiet, transfer)
     }
 

@@ -27,6 +27,8 @@ On Linux, the launcher uses the system's OpenGL and X11 or Wayland libraries. Th
 
 The first resource preparation or native mod build can take several minutes and several GB of storage. Subsequent launches reuse prepared resources and builds.
 
+Native mod compilation uses all available CPU cores by default for every build profile, including GitHub imports, updates, and rebuilds. Set `CARGO_BUILD_JOBS` before starting MCRS to limit parallel compiler jobs (for example, `CARGO_BUILD_JOBS=2`).
+
 Preparation retries temporary DNS, connection and server-availability failures up to three attempts, reusing completed downloads. Cancel also stops retry waits. If connectivity stays unavailable, restore the connection and press Play again to resume.
 
 GitHub update checks also retry temporary network failures. If a check stays unavailable, the Updates page shows that status and retains any last-known release details without claiming they are current. Engine downloads retry temporary GitHub failures and use GitHub's release-asset API when the browser download endpoint returns a gateway error. Play can continue with a verified, prepared installed build when there are no pending mod changes; Horizon still checks the Minecraft account. Explicit installation requests require the update to succeed.

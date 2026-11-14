@@ -367,6 +367,37 @@ fn failed_native_build_remains_pending_for_retry() {
 
 #[cfg(unix)]
 #[test]
+fn native_build_uses_all_available_cores_unless_jobs_are_overridden() {
+    let expected_jobs = std::env::var("CARGO_BUILD_JOBS").unwrap_or_else(|_| {
+        std::thread::available_parallelism()
+            .map_or(1, |cores| cores.get())
+            .to_string()
+    });
+    for profile in [
+        mcrslauncher::model::BuildProfile::Performance,
+        mcrslauncher::model::BuildProfile::Release,
+        mcrslauncher::model::BuildProfile::Dev,
+    ] {
+        let (_temp, engine) = fake_build_engine(
+            r#"if [ "$1" = native-build ]; then
+    printf '%s' "$CARGO_BUILD_JOBS" > "$HORIZON_LAUNCHER_HOME/build-jobs"
+fi"#,
+            "v0.2.97",
+            &["v0.2.97"],
+            &["v0.2.97"],
+        );
+        let settings = Settings {
+            build_profile: profile,
+            ..Default::default()
+        };
+        engine.build(&settings, false, &|_| {}).unwrap();
+        let jobs = fs::read_to_string(engine.paths.engine_home().join("build-jobs")).unwrap();
+        assert_eq!(jobs, expected_jobs, "{} profile", profile.argument());
+    }
+}
+
+#[cfg(unix)]
+#[test]
 fn native_build_uses_requested_profile_and_clears_pending_changes_on_success() {
     let (_temp, engine) = fake_build_engine(
         "printf '%s\\n' \"$@\" > \"$HORIZON_LAUNCHER_HOME/arguments\"",
