@@ -8,6 +8,8 @@ All 59 tests pass, including a full run with a symlinked `TMPDIR`. That run repr
 
 Built version 0.2.7 in release mode and packaged a local Flatpak without installing it. AppStream metadata validation, the executable smoke test in the Freedesktop SDK 26.08 runtime, and C/ALSA/libudev prerequisite checks passed. GitHub's release workflow separately validates and packages all desktop platforms and Flatpak before publication.
 
+The v0.2.7 GitHub release passed Linux, Windows, macOS and Flatpak CI. Downloaded all five release assets and checked their GitHub SHA-256 digests, then checked the four packages against `SHA256SUMS`. Published the signed Flatpak update with the restored original signing identity. An isolated OSTree client rejected the repository before importing its public key, then verified the hosted summary and app commit with signature checks enabled. The publisher now recreates `refs/remotes`, an empty OSTree directory omitted by Git snapshots that otherwise prevents static-delta generation on a fresh checkout.
+
 ## Launcher update controls — 2026-11-11
 
 Added manual MCRS release checks, platform package selection, verified native downloads, atomic executable replacement on Unix, and a restart action. Windows and unwritable installations keep a verified download for manual replacement. Flatpak delegates to the system software updater and provides a copyable update command; no additional sandbox permissions are requested. Horizon's automatic-check preferences remain separate.

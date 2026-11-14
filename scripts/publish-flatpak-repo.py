@@ -96,6 +96,8 @@ def main():
         repo = site / "repo"
         if not (repo / "config").exists():
             run("ostree", "--repo=" + str(repo), "init", "--mode=archive-z2")
+        # Git snapshots omit empty directories, but OSTree's ref enumeration needs this one.
+        (repo / "refs/remotes").mkdir(parents=True, exist_ok=True)
         run("flatpak", "build-import-bundle", "--gpg-sign=" + key, "--gpg-homedir=" + str(key_home), "--no-summary-index", repo, bundle)
         run("flatpak", "build-update-repo", "--gpg-sign=" + key, "--gpg-homedir=" + str(key_home),
             "--gpg-import=" + str(ROOT / "packaging/flatpak/mcrslauncher.gpg"), "--no-summary-index",
