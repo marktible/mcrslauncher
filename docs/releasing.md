@@ -16,6 +16,8 @@ After a stable GitHub release has passed verification, run:
 python3 scripts/publish-flatpak-repo.py --tag vVERSION --push
 ```
 
+A local rebuild is not a published Flatpak update. If the installed local commit is newer than the repository's published build, Flatpak reports “Update is older than current version.” Publish a newer numbered release and its signed repository, then verify a normal `flatpak update` against that installation before reporting the update as available.
+
 The publisher downloads the release bundle, verifies its published SHA-256 digest, signs the app and repository metadata, creates static deltas, and publishes a generated snapshot to the `flatpak-repo` branch. Flatpak clients use its HTTPS raw-file URL, with GPG verification enabled. An optimistic Git lease prevents replacing a concurrent publication. The source branch and release tag are unchanged.
 
 The dedicated signing directory is `~/.local/share/mcrslauncher-signing/flatpak-gnupg`; its fingerprint is stored beside it in `flatpak-key-id`. Keep a secure backup of this directory. The repository contains only its public key. The private signing key is local to the maintainer machine and is not available to GitHub Actions, so the signed-repository publish command is a separate maintainer step after the release workflow finishes.

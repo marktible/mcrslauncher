@@ -11,7 +11,7 @@
   <description>
     <p>A lightweight native Rust desktop launcher for Horizon, the Rust implementation of Minecraft.</p>
     <ul>
-      <li>Sign in with the Microsoft account that owns Minecraft: Java Edition.</li>
+      <li>Play a prepared game as Guest or a saved offline profile, with optional Microsoft sign-in for authenticated servers.</li>
       <li>Install current Horizon builds and check for updates.</li>
       <li>Import native Horizon mods from GitHub and compile them inside the sandbox.</li>
     </ul>
@@ -25,6 +25,12 @@
   <url type="bugtracker">https://github.com/marktible/mcrslauncher/issues</url>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.2.8" date="2026-11-14">
+      <description>
+        <p>Add an account menu, saved offline profiles, and Guest play without required Microsoft sign-in.</p>
+        <p>Publish the account changes as a versioned release for the signed Flatpak update repository.</p>
+      </description>
+    </release>
     <release version="0.2.7" date="2026-11-14">
       <description>
         <p>Use all available CPU cores for native mod compilation by default, while preserving explicit CARGO_BUILD_JOBS limits.</p>
