@@ -182,6 +182,50 @@ fn settings_are_atomic_and_corruption_is_reported() {
 }
 
 #[test]
+fn offline_accounts_are_validated_saved_selected_and_removed_without_microsoft_accounts() {
+    let temporary = tempfile::tempdir().unwrap();
+    let paths = Paths {
+        root: temporary.path().to_path_buf(),
+    };
+    let mut settings = Settings::default();
+    assert!(settings.offline_player_name().unwrap().is_none());
+    for invalid in [
+        "",
+        "ab",
+        "12345678901234567",
+        "bad name",
+        "--name",
+        "../player",
+        "ผู้เล่น",
+    ] {
+        assert!(
+            settings.create_offline_account(invalid).is_err(),
+            "{invalid}"
+        );
+    }
+    assert!(settings.offline_accounts.is_empty());
+    settings.create_offline_account("Player_One").unwrap();
+    assert!(settings.offline_mode);
+    assert!(settings.create_offline_account("player_one").is_err());
+    settings.create_offline_account("Player_Two").unwrap();
+    settings.select_offline_account(Some("Player_One")).unwrap();
+    paths.save_settings(&settings).unwrap();
+    let mut loaded = paths.load_settings().unwrap();
+    assert_eq!(loaded.offline_player_name().unwrap(), Some("Player_One"));
+    loaded.remove_offline_account("Player_One").unwrap();
+    assert_eq!(loaded.offline_player_name().unwrap(), Some("Player_Two"));
+    loaded.remove_offline_account("Player_Two").unwrap();
+    assert!(loaded.offline_player_name().unwrap().is_none());
+    assert!(loaded.offline_mode);
+    assert!(loaded.select_offline_account(Some("Missing")).is_err());
+    loaded.selected_offline_account = Some("Invalid name".into());
+    assert!(loaded.offline_player_name().is_err());
+    let old: Settings = serde_json::from_str("{}").unwrap();
+    assert!(old.offline_accounts.is_empty());
+    assert!(old.offline_player_name().unwrap().is_none());
+}
+
+#[test]
 fn automatic_update_schedule_preserves_old_settings_and_respects_offline_mode() {
     let old_disabled: Settings = serde_json::from_str(r#"{"auto_check":false}"#).unwrap();
     assert!(old_disabled.automatic_update_interval().is_none());

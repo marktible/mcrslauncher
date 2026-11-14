@@ -165,10 +165,20 @@ fn execute_with_catalog(
     report: crate::engine::Reporter<'_>,
     catalog: &dyn Fn() -> Result<Catalog>,
 ) -> Result<String> {
+    // Signed-out users can play a prepared installation as a local player without
+    // enabling Offline mode first or starting a sign-in/update request.
+    if matches!(action, Action::Play)
+        && !settings.offline_mode
+        && engine.paths.engine().exists()
+        && !engine.snapshot()?.owner
+    {
+        engine.play_offline(settings, report)?;
+        return Ok("Offline game closed".into());
+    }
     if settings.offline_mode {
         match action {
             Action::Play => {
-                engine.play_offline(report)?;
+                engine.play_offline(settings, report)?;
                 return Ok("Offline game closed".into());
             }
             Action::Refresh | Action::SelectAccount(_) | Action::SignOut(_) => {}
@@ -277,7 +287,9 @@ fn execute_with_catalog(
             }
             engine.verify_local_engine()?;
             if matches!(action, Action::Setup) {
-                return Ok("Horizon engine is ready. Sign in to Minecraft to continue.".into());
+                return Ok(
+                    "Horizon engine is ready. Install and prepare game resources to play.".into(),
+                );
             }
             if matches!(action, Action::SignIn) {
                 engine.run(&["account", "sign-in"], report, false)?;
@@ -285,10 +297,10 @@ fn execute_with_catalog(
             }
             if matches!(action, Action::Play) {
                 let snapshot = engine.snapshot()?;
-                ensure!(
-                    snapshot.owner,
-                    "Sign in with a Microsoft account that owns Minecraft: Java Edition"
-                );
+                if !snapshot.owner {
+                    engine.play_offline(settings, report)?;
+                    return Ok("Offline game closed".into());
+                }
                 if engine.receipt().mods_dirty {
                     if snapshot.mods.is_empty() {
                         engine.restore_base(report)?;
@@ -471,6 +483,38 @@ test "$1" = play
     }
 
     #[test]
+    fn signed_out_play_uses_guest_or_selected_offline_name_without_catalog_or_authentication() {
+        for named in [false, true] {
+            let (_temporary, engine) = installed(false, true, false);
+            let binary = engine
+                .paths
+                .engine_home()
+                .join("versions/native-test/horizon-client");
+            fs::write(
+                &binary,
+                "#!/bin/sh\nprintf '%s\\n' \"$@\" > guest-arguments\n",
+            )
+            .unwrap();
+            fs::set_permissions(&binary, fs::Permissions::from_mode(0o755)).unwrap();
+            let mut settings = Settings::default();
+            if named {
+                settings.create_offline_account("Local_Player").unwrap();
+            }
+            // No offline toggle is needed when there is no signed-in owner.
+            settings.offline_mode = false;
+            execute_with_catalog(&engine, &Action::Play, &settings, &|_| {}, &|_| {}, &|| {
+                panic!("signed-out Play must not request updates")
+            })
+            .unwrap();
+            let arguments =
+                fs::read_to_string(engine.paths.game_home().join("guest-arguments")).unwrap();
+            assert_eq!(arguments.contains("--name\nLocal_Player\n"), named);
+            assert!(!arguments.contains("session"));
+            assert!(!engine.paths.engine_home().join("commands").exists());
+        }
+    }
+
+    #[test]
     fn offline_mode_rejects_downloads_missing_resources_and_pending_mods() {
         let settings = Settings {
             offline_mode: true,
@@ -607,12 +651,8 @@ test "$1" = play
     }
 
     #[test]
-    fn failed_engine_update_does_not_bypass_ownership_preparation_or_pending_mods() {
-        for (owner, prepared, dirty) in [
-            (false, true, false),
-            (true, false, false),
-            (true, true, true),
-        ] {
+    fn failed_engine_update_does_not_bypass_preparation_or_pending_mods() {
+        for (owner, prepared, dirty) in [(true, false, false), (true, true, true)] {
             let (_temporary, engine) = installed(owner, prepared, dirty);
             assert!(
                 execute_with_catalog(
@@ -681,12 +721,8 @@ test "$1" = play
     }
 
     #[test]
-    fn unavailable_updates_do_not_bypass_ownership_preparation_or_pending_mod_builds() {
-        for (owner, prepared, dirty) in [
-            (false, true, false),
-            (true, false, false),
-            (true, true, true),
-        ] {
+    fn unavailable_updates_do_not_bypass_preparation_or_pending_mod_builds() {
+        for (owner, prepared, dirty) in [(true, false, false), (true, true, true)] {
             let (_temporary, engine) = installed(owner, prepared, dirty);
             assert!(
                 execute_with_catalog(

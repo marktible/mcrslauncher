@@ -39,6 +39,13 @@ enum Confirm {
     Remove(String),
 }
 
+#[derive(Clone, PartialEq)]
+enum AccountChoice {
+    Guest,
+    Offline(String),
+    Microsoft(String),
+}
+
 struct SkinEditor {
     account: Account,
     model: SkinModel,
@@ -80,6 +87,10 @@ pub struct Launcher {
     checked_at: Option<SystemTime>,
     last_check: Instant,
     playing: bool,
+    new_offline_account: bool,
+    offline_account_name: String,
+    offline_account_error: Option<String>,
+    pending_account: Option<String>,
 }
 
 impl Launcher {
@@ -133,6 +144,10 @@ impl Launcher {
             checked_at: None,
             last_check: Instant::now(),
             playing: false,
+            new_offline_account: false,
+            offline_account_name: String::new(),
+            offline_account_error: None,
+            pending_account: None,
         };
         app.start(Action::Refresh);
         app.error = error;
@@ -194,6 +209,17 @@ impl Launcher {
                     }
                 }
                 Event::Snapshot(snapshot) => {
+                    if self.pending_account.as_ref().is_some_and(|uuid| {
+                        snapshot
+                            .accounts
+                            .iter()
+                            .any(|account| account.selected && &account.uuid == uuid)
+                    }) {
+                        self.pending_account = None;
+                        let mut settings = self.settings.clone();
+                        settings.offline_mode = false;
+                        self.save_account_settings(settings);
+                    }
                     let mut accounts = snapshot.accounts.clone();
                     accounts.sort_by_key(|account| !account.selected);
                     let _ = self
@@ -224,6 +250,7 @@ impl Launcher {
                     match result {
                         Ok(message) => self.notice = message,
                         Err(error) => {
+                            self.pending_account = None;
                             if self.logs.len() >= 500 {
                                 self.logs.pop_front();
                             }
@@ -667,7 +694,7 @@ impl Launcher {
                 self.play_button(ui);
                 ui.add_space(7.);
                 ui.label(
-                    RichText::new(if self.settings.offline_mode {
+                    RichText::new(if self.settings.offline_mode || !self.snapshot.owner {
                         "Offline · uses installed resources; single-player and offline servers"
                     } else if self.settings.update_before_play {
                         "Checks for updates; uses the prepared installed build if unavailable"
@@ -682,22 +709,10 @@ impl Launcher {
     }
 
     fn play_button(&mut self, ui: &mut egui::Ui) {
-        if ui
-            .add_enabled(
-                !self.busy,
-                egui::Checkbox::new(&mut self.settings.offline_mode, "Offline mode"),
-            )
-            .changed()
-        {
-            self.pending_check = false;
-            self.save();
-        }
-        let (label, action) = if self.settings.offline_mode {
-            ("Play offline  >", Action::Play)
-        } else if !self.engine_ready() {
+        let (label, action) = if !self.engine_ready() {
             ("Set up Horizon", Action::Setup)
-        } else if !self.snapshot.owner {
-            ("Sign in to Minecraft", Action::SignIn)
+        } else if self.settings.offline_mode || !self.snapshot.owner {
+            ("Play offline  >", Action::Play)
         } else {
             (
                 if self.receipt.mods_dirty {
@@ -711,6 +726,153 @@ impl Launcher {
         if primary(ui, label, !self.busy).clicked() {
             self.start(action);
         }
+        ui.add_space(6.);
+        self.account_menu(ui, "play_account");
+        if ui
+            .add_enabled(
+                !self.busy,
+                egui::Checkbox::new(&mut self.settings.offline_mode, "Offline mode"),
+            )
+            .changed()
+        {
+            self.pending_check = false;
+            self.save();
+        }
+    }
+
+    fn save_account_settings(&mut self, settings: Settings) -> bool {
+        match self.paths.save_settings(&settings) {
+            Ok(()) => {
+                self.settings = settings;
+                self.pending_check = false;
+                true
+            }
+            Err(error) => {
+                self.error = Some(format!("Could not save accounts: {error:#}"));
+                false
+            }
+        }
+    }
+
+    fn choose_account(&mut self, choice: AccountChoice) {
+        if self.busy {
+            return;
+        }
+        let mut settings = self.settings.clone();
+        match choice {
+            AccountChoice::Guest | AccountChoice::Offline(_) => {
+                let name = match &choice {
+                    AccountChoice::Offline(name) => Some(name.as_str()),
+                    _ => None,
+                };
+                match settings.select_offline_account(name) {
+                    Ok(()) => {
+                        self.save_account_settings(settings);
+                    }
+                    Err(error) => self.error = Some(error.to_string()),
+                }
+            }
+            AccountChoice::Microsoft(uuid) => {
+                let selected = self
+                    .snapshot
+                    .accounts
+                    .iter()
+                    .find(|account| account.selected)
+                    .or(self.snapshot.accounts.first());
+                if selected.is_some_and(|account| account.uuid == uuid) {
+                    settings.offline_mode = false;
+                    self.save_account_settings(settings);
+                } else {
+                    self.start(Action::SelectAccount(uuid.clone()));
+                    if self.busy {
+                        self.pending_account = Some(uuid);
+                    }
+                }
+            }
+        }
+    }
+
+    fn account_menu(&mut self, ui: &mut egui::Ui, id: &str) {
+        let active = if self.settings.offline_mode || !self.snapshot.owner {
+            self.settings
+                .selected_offline_account
+                .clone()
+                .map(AccountChoice::Offline)
+                .unwrap_or(AccountChoice::Guest)
+        } else {
+            self.snapshot
+                .accounts
+                .iter()
+                .find(|account| account.selected)
+                .or(self.snapshot.accounts.first())
+                .map(|account| AccountChoice::Microsoft(account.uuid.clone()))
+                .unwrap_or(AccountChoice::Guest)
+        };
+        let label = match &active {
+            AccountChoice::Guest => "Guest · no account".into(),
+            AccountChoice::Offline(name) => format!("{name} · offline"),
+            AccountChoice::Microsoft(uuid) => self
+                .snapshot
+                .accounts
+                .iter()
+                .find(|account| &account.uuid == uuid)
+                .map(|account| format!("{} · Microsoft", account.name))
+                .unwrap_or_default(),
+        };
+        let mut choice = None;
+        ui.add_enabled_ui(!self.busy, |ui| {
+            egui::ComboBox::from_id_salt(id)
+                .selected_text(label)
+                .width(ui.available_width().min(280.))
+                .show_ui(ui, |ui| {
+                    if ui
+                        .selectable_label(active == AccountChoice::Guest, "Guest · no account")
+                        .clicked()
+                    {
+                        choice = Some(AccountChoice::Guest);
+                    }
+                    for name in &self.settings.offline_accounts {
+                        let account = AccountChoice::Offline(name.clone());
+                        if ui
+                            .selectable_label(active == account, format!("{name} · offline"))
+                            .clicked()
+                        {
+                            choice = Some(account);
+                        }
+                    }
+                    if !self.snapshot.accounts.is_empty() {
+                        ui.separator();
+                    }
+                    for account in &self.snapshot.accounts {
+                        let item = AccountChoice::Microsoft(account.uuid.clone());
+                        if ui
+                            .selectable_label(
+                                active == item,
+                                format!("{} · Microsoft", account.name),
+                            )
+                            .clicked()
+                        {
+                            choice = Some(item);
+                        }
+                    }
+                });
+            ui.horizontal_wrapped(|ui| {
+                if ui.button("Create offline account").clicked() {
+                    self.new_offline_account = true;
+                    self.offline_account_error = None;
+                }
+                if ui.button("Microsoft sign-in (optional)").clicked() {
+                    let mut settings = self.settings.clone();
+                    settings.offline_mode = false;
+                    if self.save_account_settings(settings) {
+                        self.start(Action::SignIn);
+                    }
+                }
+            });
+        });
+        if let Some(choice) = choice {
+            self.choose_account(choice);
+        }
     }
 
     fn account_card(&mut self, ui: &mut egui::Ui, width: f32) {
@@ -719,10 +881,11 @@ impl Launcher {
                 ui.set_width((width - card().total_margin().sum().x).max(0.));
                 ui.label(RichText::new("MINECRAFT ACCOUNT").size(10.).color(MUTED));
                 ui.add_space(17.);
-                if self.settings.offline_mode {
-                    ui.label(RichText::new("Playing offline").size(17.).strong());
+                if self.settings.offline_mode || !self.snapshot.owner {
+                    let name = self.settings.selected_offline_account.as_deref().unwrap_or("Guest");
+                    ui.label(RichText::new(name).size(17.).strong());
                     ui.add_space(8.);
-                    ui.label(RichText::new("The game uses its local offline identity. Sign in online to use your Microsoft profile and authenticated servers.").size(12.).color(MUTED));
+                    ui.label(RichText::new("Local offline player · no sign-in required. Use the account menu to switch players or create an offline account.").size(12.).color(MUTED));
                 } else if let Some(account) = self
                     .snapshot
                     .accounts
@@ -1132,6 +1295,23 @@ impl Launcher {
             ui.set_width(ui.available_width());
             ui.label(RichText::new("ACCOUNTS").size(10.).color(ACCENT));
             ui.add_space(10.);
+            self.account_menu(ui, "settings_account");
+            for name in self.settings.offline_accounts.clone() {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(format!("{name} · offline"));
+                    if self.settings.selected_offline_account.as_deref() == Some(name.as_str()) && (self.settings.offline_mode || !self.snapshot.owner) {
+                        badge(ui, "ACTIVE", GREEN);
+                    }
+                    if ui.add_enabled(!self.busy, egui::Button::new("Remove offline account")).clicked() {
+                        let mut settings = self.settings.clone();
+                        match settings.remove_offline_account(&name) {
+                            Ok(()) => { self.save_account_settings(settings); }
+                            Err(error) => self.error = Some(error.to_string()),
+                        }
+                    }
+                });
+            }
+            ui.label(RichText::new("Offline profiles are local names. Removing one keeps your worlds and game files.").size(11.).color(MUTED));
             for account in self.snapshot.accounts.clone() {
                 ui.horizontal(|ui| {
                     self.profile_avatar(ui, &account, 28.);
@@ -1140,7 +1320,7 @@ impl Launcher {
                     ui.horizontal_wrapped(|ui| {
                         if ui.add_enabled(!self.settings.offline_mode, egui::Button::new("Change skin")).clicked() { self.edit_skin(account.clone()); }
                         if ui.add_enabled(!self.busy, egui::Button::new("Sign out")).clicked() { self.start(Action::SignOut(account.uuid.clone())); }
-                        if !account.selected && ui.add_enabled(!self.busy, egui::Button::new("Use account")).clicked() { self.start(Action::SelectAccount(account.uuid.clone())); }
+                        if ui.add_enabled(!self.busy, egui::Button::new("Use Microsoft account")).clicked() { self.choose_account(AccountChoice::Microsoft(account.uuid.clone())); }
                     });
                 });
                 ui.add_space(8.);
@@ -1190,6 +1370,37 @@ impl Launcher {
     }
 
     fn dialogs(&mut self, ctx: &egui::Context) {
+        if self.new_offline_account {
+            let mut open = true;
+            egui::Window::new("Create offline account").open(&mut open).collapsible(false)
+                .resizable(true).anchor(egui::Align2::CENTER_CENTER, [0., 0.]).default_width(360.)
+                .min_width(260.).max_width((ctx.content_rect().width() - 32.).max(260.))
+                .max_height((ctx.content_rect().height() - 32.).max(180.)).vscroll(true)
+                .show(ctx, |ui| {
+                    ui.label("Choose a local player name. No Microsoft sign-in is needed.");
+                    let name = ui.add(egui::TextEdit::singleline(&mut self.offline_account_name).hint_text("Player name").desired_width(f32::INFINITY));
+                    if name.changed() { self.offline_account_error = None; }
+                    ui.label(RichText::new("3–16 letters, digits, or underscores. Offline profiles play single-player and offline-mode servers.").size(11.).color(MUTED));
+                    if let Some(error) = &self.offline_account_error { ui.colored_label(ACCENT, error); }
+                    let create = ui.add_enabled(!self.busy, egui::Button::new("Create & select")).clicked()
+                        || (name.lost_focus() && ctx.input(|input| input.key_pressed(egui::Key::Enter)) && !self.busy);
+                    if create {
+                        let mut settings = self.settings.clone();
+                        match settings.create_offline_account(&self.offline_account_name) {
+                            Ok(()) => {
+                                if self.save_account_settings(settings) {
+                                    self.new_offline_account = false;
+                                    self.offline_account_name.clear();
+                                    self.offline_account_error = None;
+                                    self.notice = "Offline account created and selected".into();
+                                }
+                            }
+                            Err(error) => self.offline_account_error = Some(error.to_string()),
+                        }
+                    }
+                });
+            self.new_offline_account &= open;
+        }
         if let Some((url, code)) = self.login.clone() {
             egui::Window::new("Connect your Minecraft account")
                 .collapsible(false)

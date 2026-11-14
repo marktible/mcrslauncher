@@ -552,7 +552,8 @@ impl Engine {
     }
 
     /// Start the prepared client without invoking account renewal or downloading anything.
-    pub fn play_offline(&self, report: Reporter<'_>) -> Result<()> {
+    pub fn play_offline(&self, settings: &Settings, report: Reporter<'_>) -> Result<()> {
+        let name = settings.offline_player_name()?;
         self.verify_local_engine()?;
         ensure!(
             !self.receipt().mods_dirty,
@@ -596,6 +597,9 @@ impl Engine {
             .env_remove("HORIZON_LAUNCHER_EXE")
             .arg("--resources")
             .arg(resources);
+        if let Some(name) = name {
+            command.arg("--name").arg(name);
+        }
         for key in [
             "LIBGL_ALWAYS_SOFTWARE",
             "GALLIUM_DRIVER",

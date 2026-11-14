@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
@@ -73,6 +73,8 @@ impl UpdateCheckInterval {
 #[serde(default)]
 pub struct Settings {
     pub offline_mode: bool,
+    pub offline_accounts: Vec<String>,
+    pub selected_offline_account: Option<String>,
     pub channel: Channel,
     pub auto_check: bool,
     pub update_check_interval: UpdateCheckInterval,
@@ -85,6 +87,8 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             offline_mode: false,
+            offline_accounts: Vec::new(),
+            selected_offline_account: None,
             channel: Channel::Nightly,
             auto_check: true,
             update_check_interval: UpdateCheckInterval::default(),
@@ -96,6 +100,56 @@ impl Default for Settings {
 }
 
 impl Settings {
+    pub fn create_offline_account(&mut self, name: &str) -> Result<()> {
+        let name = name.trim();
+        validate_offline_name(name)?;
+        ensure!(
+            !self
+                .offline_accounts
+                .iter()
+                .any(|saved| saved.eq_ignore_ascii_case(name)),
+            "An offline account with this name already exists"
+        );
+        self.offline_accounts.push(name.to_owned());
+        self.select_offline_account(Some(name))
+    }
+
+    pub fn select_offline_account(&mut self, name: Option<&str>) -> Result<()> {
+        if let Some(name) = name {
+            validate_offline_name(name)?;
+            ensure!(
+                self.offline_accounts.iter().any(|saved| saved == name),
+                "This offline account no longer exists"
+            );
+        }
+        self.selected_offline_account = name.map(str::to_owned);
+        self.offline_mode = true;
+        Ok(())
+    }
+
+    pub fn remove_offline_account(&mut self, name: &str) -> Result<()> {
+        ensure!(
+            self.offline_accounts.iter().any(|saved| saved == name),
+            "This offline account no longer exists"
+        );
+        self.offline_accounts.retain(|saved| saved != name);
+        if self.selected_offline_account.as_deref() == Some(name) {
+            self.selected_offline_account = self.offline_accounts.first().cloned();
+        }
+        Ok(())
+    }
+
+    pub fn offline_player_name(&self) -> Result<Option<&str>> {
+        if let Some(name) = self.selected_offline_account.as_deref() {
+            validate_offline_name(name)?;
+            ensure!(
+                self.offline_accounts.iter().any(|saved| saved == name),
+                "Select an existing offline account or Guest before playing"
+            );
+        }
+        Ok(self.selected_offline_account.as_deref())
+    }
+
     pub fn automatic_update_interval(&self) -> Option<Duration> {
         if self.auto_check && !self.offline_mode {
             self.update_check_interval.duration()
@@ -103,6 +157,15 @@ impl Settings {
             None
         }
     }
+}
+
+pub fn validate_offline_name(name: &str) -> Result<()> {
+    ensure!(
+        (3..=16).contains(&name.len())
+            && name.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_'),
+        "Use 3–16 letters, digits, or underscores for an offline account name"
+    );
+    Ok(())
 }
 
 #[derive(Clone, Debug)]

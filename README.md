@@ -40,6 +40,7 @@ Use `--page mods`, `--page updates`, or `--page settings` to open a page directl
 ## Features
 
 - Microsoft device-code authentication, ownership checks, account selection and sign-out through Horizon's official CLI. Horizon manages credentials and keychain integration.
+- Play as Guest without an account, or create named offline profiles in the Play account menu. Switch between saved offline profiles and optional Microsoft accounts there or in Settings.
 - Persistent download progress with percentage, transferred bytes, speed, ETA and elapsed time. Preparation and builds show activity when a percentage is unavailable.
 - **Open game folder** opens the active instance directly from Play or Settings.
 - Actual Minecraft skin heads, cached locally with their hat layer. **Change skin** opens a PNG picker and applies classic or slim skins to the signed-in Java Edition account.
@@ -63,7 +64,9 @@ Choose **Settings → Automatic update checks** to control startup and backgroun
 
 Enable **Offline mode** on Play or in Settings to start an installed, prepared game directly without Microsoft sign-in, account renewal, update checks, downloads, or mod builds. The preference persists across restarts. Cached skin heads remain available; skin changes and other online actions require turning offline mode off. Your online update preferences are kept for when you reconnect.
 
-Offline play uses the selected instance's game folder and build, with the game's local offline identity and no Microsoft session. It supports single-player and offline-mode servers; authenticated servers require online play. Install and prepare the game online first. Missing resources or pending mod changes produce an error explaining that an online preparation or build is needed; offline mode never downloads them or silently launches an older mod set.
+No account is required to play an installed, prepared build: signed-out Play automatically starts as Guest or the last selected offline profile, even when the Offline mode checkbox is off. **Create offline account** saves a name of 3–16 letters, digits, or underscores and selects it immediately. The account menu switches between Guest, saved offline profiles, and optional Microsoft accounts. Settings can remove offline profiles without deleting worlds or other game files. Names are stored locally in `settings.json` and passed directly to the game with `--name`.
+
+Offline play uses the selected instance's game folder and build, with no Microsoft session. It supports single-player and offline-mode servers; authenticated servers require a Microsoft account. Install and prepare the game resources first; signing in is needed if downloading Minecraft resources for your account. Missing resources or pending mod changes produce an error explaining that preparation or a build is needed; offline mode never downloads them or silently launches an older mod set.
 
 For online play without a GitHub update check, turn off **Install the newest build before playing** in Settings. Account renewal and cached ownership handling then remain Horizon's responsibility. Failed checks leave the installed game intact and report the error.
 

@@ -1,5 +1,13 @@
 # Validation — 2026-11-04
 
+## Offline accounts and account switching — 2026-11-14
+
+Play and Settings now provide a menu for Guest, saved offline names, and Microsoft accounts. Offline profiles are validated, created, selected, persisted, and removed locally without changing Horizon's credential store. Signed-out Play uses the prepared client directly without an account gate, update lookup, or authentication request. Named profiles use the client's `--name` option, confirmed against the installed 2026-11-13 game's own help output.
+
+All 61 tests pass, including profile validation, duplicate rejection, saved selection, deletion fallback, and real subprocess dispatch as Guest or a named player with no signed-in account and the offline toggle disabled. Clippy and the Flatpak source-lock check pass. The account menu was visually checked with isolated profile data; a compact-window check prompted moving Play above the account controls to preserve access to the launch action. Full gameplay and live Microsoft account switching were not exercised.
+
+Built and packaged the native release with the 26.08 runtime checks passing. Installed the signed local commit into the existing system Flatpak, verified it against the configured project key, and confirmed that the installed executable's SHA-256 matches the new release binary. The installed command-line smoke test passes, the original signed remote is retained, and GPG verification remains enabled. This local update retains the 0.2.7 version label.
+
 ## Release 0.2.7 — 2026-11-14
 
 Native builds now receive `CARGO_BUILD_JOBS` equal to the available CPU count unless the caller explicitly sets it. The subprocess regression test checks performance, release, and development profiles; it passes both with the default environment and with `CARGO_BUILD_JOBS=2`.
