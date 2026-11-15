@@ -8,6 +8,8 @@ Only the publication job has repository-content write permission. It creates a d
 
 Native Linux builds use Ubuntu 22.04 and verify that their required glibc symbols do not exceed 2.35. Keep that baseline pinned when updating runners; Flatpak uses its own SDK runtime. `Repair native Linux release` rebuilds an existing tag's Linux archive against this baseline, holds its release as a draft while replacing that archive and its checksums, and preserves the other downloads.
 
+The release retry workflow retries only a Flatpak builder crash reported as `/app/bin/xvfb-run` exit code 139, with at most three total attempts. Other failures require review. It reruns failed jobs on the original release commit and keeps successful platform builds. A manual run checks the release for the current package version.
+
 ## Publishing Flatpak updates
 
 After a stable GitHub release has passed verification, run:

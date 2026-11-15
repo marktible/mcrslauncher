@@ -1,0 +1,65 @@
+name: Retry transient Flatpak release failure
+
+on:
+  workflow_run:
+    workflows: ['Publish release']
+    types: [completed]
+  push:
+    branches: [main]
+    paths: ['.github/workflows/retry-release.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: retry-flatpak-release
+  cancel-in-progress: false
+
+jobs:
+  retry:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'failure'
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Retry only a crashed Flatpak builder, at most twice
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          FAILED_RUN_ID: ${{ github.event.workflow_run.id }}
+        shell: python
+        run: |
+          import json
+          import os
+          import subprocess
+          import tomllib
+
+          repo = os.environ['GH_REPO']
+          def api(path):
+              return json.loads(subprocess.check_output(['gh', 'api', f'repos/{repo}/{path}'], text=True))
+
+          run_id = os.environ.get('FAILED_RUN_ID')
+          if not run_id:
+              with open('Cargo.toml', 'rb') as source:
+                  tag = 'v' + tomllib.load(source)['package']['version']
+              runs = api(f'actions/workflows/release.yml/runs?branch={tag}&per_page=1')['workflow_runs']
+              if not runs:
+                  raise SystemExit('No release workflow to retry.')
+              run_id = str(runs[0]['id'])
+          run = api(f'actions/runs/{run_id}')
+          if run['path'] != '.github/workflows/release.yml' or run['status'] != 'completed' or run['conclusion'] != 'failure':
+              print('No failed release needs a retry.')
+              raise SystemExit(0)
+          if run['run_attempt'] >= 3:
+              raise SystemExit('Retry limit reached; inspect the Flatpak builder failure.')
+          jobs = api(f'actions/runs/{run_id}/jobs?filter=latest&per_page=100')['jobs']
+          failed = [job for job in jobs if job['conclusion'] == 'failure']
+          if not failed or any(job['name'] != 'flatpak / flatpak' for job in failed):
+              raise SystemExit('This failure requires review; only the Flatpak crash is retried.')
+          for job in failed:
+              annotations = api(f'check-runs/{job["id"]}/annotations?per_page=100')
+              if not any('/app/bin/xvfb-run' in item['message'] and 'exit code 139' in item['message'] for item in annotations):
+                  raise SystemExit('The builder did not report the known crash; no automatic retry.')
+          subprocess.run(['gh', 'run', 'rerun', str(run_id), '--failed', '--repo', repo], check=True)
+          print(f'Retrying failed Flatpak release job in run {run_id}.')
