@@ -11,6 +11,7 @@ on:
 
 permissions:
   contents: read
+  checks: read
   actions: write
 
 concurrency:
@@ -32,8 +33,9 @@ jobs:
         run: |
           import json
           import os
+          from pathlib import Path
+          import re
           import subprocess
-          import tomllib
 
           repo = os.environ['GH_REPO']
           def api(path):
@@ -41,8 +43,10 @@ jobs:
 
           run_id = os.environ.get('FAILED_RUN_ID')
           if not run_id:
-              with open('Cargo.toml', 'rb') as source:
-                  tag = 'v' + tomllib.load(source)['package']['version']
+              version = re.search(r'^version = "(\d+\.\d+\.\d+)"$', Path('Cargo.toml').read_text(), re.MULTILINE)
+              if not version:
+                  raise SystemExit('Cannot determine the package version.')
+              tag = 'v' + version.group(1)
               runs = api(f'actions/workflows/release.yml/runs?branch={tag}&per_page=1')['workflow_runs']
               if not runs:
                   raise SystemExit('No release workflow to retry.')
