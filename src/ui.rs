@@ -17,14 +17,14 @@ use std::{
     time::{Duration, Instant, SystemTime},
 };
 
-const BG: Color32 = Color32::from_rgb(19, 22, 23);
-const PANEL: Color32 = Color32::from_rgb(26, 30, 31);
-const CARD: Color32 = Color32::from_rgb(30, 35, 35);
-const LINE: Color32 = Color32::from_rgb(48, 55, 54);
-const TEXT: Color32 = Color32::from_rgb(235, 236, 225);
-const MUTED: Color32 = Color32::from_rgb(146, 159, 152);
-const ACCENT: Color32 = Color32::from_rgb(231, 151, 92);
-const GREEN: Color32 = Color32::from_rgb(151, 191, 142);
+const BG: Color32 = Color32::from_rgb(18, 21, 22);
+const PANEL: Color32 = Color32::from_rgb(23, 27, 28);
+const CARD: Color32 = Color32::from_rgb(28, 33, 33);
+const LINE: Color32 = Color32::from_rgb(44, 51, 50);
+const TEXT: Color32 = Color32::from_rgb(236, 239, 232);
+const MUTED: Color32 = Color32::from_rgb(155, 168, 161);
+const ACCENT: Color32 = Color32::from_rgb(238, 166, 111);
+const GREEN: Color32 = Color32::from_rgb(160, 195, 153);
 
 #[derive(Clone, Copy, PartialEq)]
 enum Page {
@@ -32,6 +32,19 @@ enum Page {
     Mods,
     Updates,
     Settings,
+}
+
+impl Page {
+    const ALL: [Self; 4] = [Self::Play, Self::Mods, Self::Updates, Self::Settings];
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Play => "Play",
+            Self::Mods => "Mods",
+            Self::Updates => "Updates",
+            Self::Settings => "Settings",
+        }
+    }
 }
 
 enum Confirm {
@@ -390,13 +403,11 @@ impl Launcher {
                         );
                         ui.label(RichText::new("MCRS").size(19.).strong());
                         ui.add_space(8.);
-                        for (page, label) in [
-                            (Page::Play, "Play"),
-                            (Page::Mods, "Mods"),
-                            (Page::Updates, "Updates"),
-                            (Page::Settings, "Settings"),
-                        ] {
-                            if ui.selectable_label(self.page == page, label).clicked() {
+                        for page in Page::ALL {
+                            if ui
+                                .selectable_label(self.page == page, page.label())
+                                .clicked()
+                            {
                                 self.page = page;
                             }
                         }
@@ -405,14 +416,13 @@ impl Launcher {
             return;
         }
         egui::SidePanel::left("navigation")
-            .default_width(202.)
-            .width_range(160. ..=260.)
+            .default_width(200.)
+            .width_range(180. ..=250.)
             .resizable(true)
             .frame(
                 Frame::new()
                     .fill(PANEL)
-                    .inner_margin(Margin::symmetric(20, 28))
-                    .stroke(Stroke::new(1_f32, LINE)),
+                    .inner_margin(Margin::symmetric(16, 26)),
             )
             .show(ctx, |ui| {
                 let short = ui.available_height() < 540.;
@@ -422,35 +432,13 @@ impl Launcher {
                     ui.label(RichText::new("MCRS").size(23.).strong().color(TEXT));
                 });
                 ui.add_space(3.);
-                ui.label(RichText::new("THE HORIZON LAUNCHER").size(9.).color(MUTED));
-                ui.add_space(if short { 12. } else { 39. });
-                if !short {
-                    ui.label(RichText::new("YOUR WORKSPACE").size(10.).color(MUTED));
-                }
-                ui.add_space(12.);
-                for (page, title, sub) in [
-                    (Page::Play, "Play", "01"),
-                    (Page::Mods, "Mods", "02"),
-                    (Page::Updates, "Updates", "03"),
-                    (Page::Settings, "Settings", "04"),
-                ] {
-                    let active = self.page == page;
-                    let button = egui::Button::new(
-                        RichText::new(format!("{sub}    {title}"))
-                            .size(14.)
-                            .color(if active { ACCENT } else { MUTED }),
-                    )
-                    .fill(if active {
-                        Color32::from_rgb(48, 42, 35)
-                    } else {
-                        Color32::TRANSPARENT
-                    })
-                    .corner_radius(6.)
-                    .min_size(egui::vec2(ui.available_width(), 43.));
-                    if ui.add(button).clicked() {
+                ui.label(RichText::new("Horizon Launcher").size(11.).color(MUTED));
+                ui.add_space(if short { 18. } else { 36. });
+                for page in Page::ALL {
+                    if navigation_item(ui, page, self.page == page).clicked() {
                         self.page = page;
                     }
-                    ui.add_space(4.);
+                    ui.add_space(2.);
                 }
                 if ui.available_height() >= if short { 64. } else { 150. } {
                     ui.with_layout(Layout::bottom_up(Align::LEFT), |ui| {
@@ -461,17 +449,17 @@ impl Launcher {
                         );
                         ui.add_space(8.);
                         if ui
-                            .link(RichText::new("Horizon on GitHub >").size(12.).color(MUTED))
+                            .link(RichText::new("Horizon on GitHub ↗").size(12.).color(MUTED))
                             .clicked()
                         {
                             self.open(github::REPOSITORY);
                         }
                         if !short {
-                            ui.add_space(20.);
+                            ui.add_space(18.);
                             ui.separator();
-                            ui.add_space(12.);
+                            ui.add_space(10.);
                             ui.label(
-                                RichText::new("Built in Rust.\nMade for your next world.")
+                                RichText::new("A little lighter.\nA new horizon.")
                                     .size(12.)
                                     .color(MUTED),
                             );
@@ -488,8 +476,7 @@ impl Launcher {
             .frame(
                 Frame::new()
                     .fill(PANEL)
-                    .inner_margin(Margin::symmetric(24, 10))
-                    .stroke(Stroke::new(1_f32, LINE)),
+                    .inner_margin(Margin::symmetric(20, 10)),
             )
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
@@ -499,11 +486,20 @@ impl Launcher {
                     } else if !self.notice.is_empty() {
                         &self.notice
                     } else {
-                        "Ready for your next adventure"
+                        "Ready"
                     };
-                    ui.add_sized(
-                        [(ui.available_width() - 190.).max(0.), 18.],
-                        egui::Label::new(RichText::new(text).size(11.).color(MUTED)).truncate(),
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(
+                            (ui.available_width() - if self.busy { 192. } else { 110. }).max(0.),
+                            18.,
+                        ),
+                        Layout::left_to_right(Align::Center),
+                        |ui| {
+                            ui.add(
+                                egui::Label::new(RichText::new(text).size(11.).color(MUTED))
+                                    .truncate(),
+                            );
+                        },
                     );
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         if ui
@@ -590,55 +586,50 @@ impl Launcher {
     }
 
     fn play(&mut self, ui: &mut egui::Ui) {
-        if ui.ctx().content_rect().height() >= 560. {
+        let short = ui.ctx().content_rect().height() < 560.;
+        if short {
+            ui.label(RichText::new("Play").size(24.).strong());
+        } else {
+            title(ui, "Play", "Your next adventure starts here.");
+        }
+        ui.add_space(if short { 10. } else { 24. });
+        if ui.ctx().content_rect().height() >= 600. {
             landscape(ui);
             ui.add_space(20.);
         }
-        ui.horizontal_wrapped(|ui| {
-            ui.label(RichText::new("Your next adventure").size(22.).strong());
-            if ui.button("Open game folder").clicked() {
-                self.open(self.game_folder());
-            }
-            badge(ui, "NATIVE RUST", GREEN);
-        });
-        ui.add_space(15.);
         let width = ui.available_width();
-        if width >= 660. {
+        if width >= 720. {
             ui.horizontal_top(|ui| {
-                ui.spacing_mut().item_spacing.x = 14.;
-                self.game_card(ui, (width - 14.) * 0.59);
-                self.account_card(ui, (width - 14.) * 0.41);
+                ui.spacing_mut().item_spacing.x = 16.;
+                self.game_card(ui, (width - 16.) * 0.57);
+                self.account_card(ui, (width - 16.) * 0.43);
             });
         } else {
             self.game_card(ui, width);
-            ui.add_space(14.);
+            ui.add_space(16.);
             self.account_card(ui, width);
         }
-        ui.add_space(19.);
-        card().show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.horizontal_wrapped(|ui| {
-                dot(ui, if self.has_update() { ACCENT } else { GREEN });
-                ui.label(
-                    RichText::new(if self.has_update() {
-                        "A new horizon is waiting"
-                    } else {
-                        "Always looking ahead"
-                    })
-                    .size(13.)
-                    .strong(),
-                );
-                if ui.button("View updates >").clicked() {
-                    self.page = Page::Updates;
-                }
+        ui.add_space(20.);
+        Frame::new()
+            .inner_margin(Margin::symmetric(4, 0))
+            .show(ui, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    dot(ui, if self.has_update() { ACCENT } else { GREEN });
+                    ui.label(
+                        RichText::new(if self.has_update() {
+                            "A new Horizon build is available."
+                        } else {
+                            "Discover the latest Horizon builds."
+                        })
+                        .size(12.)
+                        .color(MUTED),
+                    );
+                    if ui.link("View updates").clicked() {
+                        self.page = Page::Updates;
+                    }
+                });
             });
-            ui.label(
-                RichText::new("Follow the latest Horizon builds and release notes.")
-                    .size(11.)
-                    .color(MUTED),
-            );
-        });
-        ui.add_space(14.);
+        ui.add_space(20.);
         ui.label(
             RichText::new("Unofficial launcher. Not affiliated with Mojang or Microsoft.")
                 .size(10.)
@@ -650,68 +641,73 @@ impl Launcher {
         card().show(ui, |ui| {
             ui.vertical(|ui| {
                 ui.set_width((width - card().total_margin().sum().x).max(0.));
+                if ui.ctx().content_rect().height() >= 560. {
+                    ui.set_min_height(250.);
+                }
                 ui.horizontal_wrapped(|ui| {
+                    ui.label(RichText::new("Horizon").size(21.).strong());
                     badge(ui, self.settings.channel.label(), ACCENT);
                     if self.snapshot.native_build {
                         badge(ui, "MODDED", GREEN);
                     }
                 });
                 if ui.ctx().content_rect().height() < 560. {
-                    ui.add_space(8.);
+                    ui.add_space(4.);
                     self.play_button(ui);
-                    ui.label(
-                        RichText::new(
-                            self.snapshot
-                                .selected_version
-                                .as_deref()
-                                .unwrap_or("Not installed"),
-                        )
-                        .size(11.)
-                        .color(MUTED),
-                    );
+                    let version = self
+                        .snapshot
+                        .selected_version
+                        .as_deref()
+                        .unwrap_or("Not installed");
+                    ui.add(
+                        egui::Label::new(RichText::new(version).size(11.).color(MUTED)).truncate(),
+                    )
+                    .on_hover_text(version);
                     return;
                 }
-                ui.add_space(16.);
-                ui.label(RichText::new("Minecraft. Reimagined.").size(22.).strong());
-                ui.add_space(6.);
                 ui.label(
-                    RichText::new("The world you know, powered by Horizon's Rust engine.")
+                    RichText::new("Minecraft, powered by Rust.")
                         .size(13.)
                         .color(MUTED),
                 );
-                ui.add_space(18.);
+                ui.add_space(12.);
                 ui.separator();
                 ui.add_space(10.);
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("INSTALLED VERSION").size(10.).color(MUTED));
+                    ui.label(RichText::new("Installed build").size(12.).color(MUTED));
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        ui.label(
-                            RichText::new(
-                                self.snapshot
-                                    .selected_version
-                                    .as_deref()
-                                    .unwrap_or("Not installed"),
-                            )
-                            .size(12.),
-                        );
+                        let version = self
+                            .snapshot
+                            .selected_version
+                            .as_deref()
+                            .unwrap_or("Not installed");
+                        ui.add(egui::Label::new(RichText::new(version).size(12.)).truncate())
+                            .on_hover_text(version);
                     });
                 });
-                ui.add_space(14.);
+                ui.add_space(12.);
                 self.play_button(ui);
-                ui.add_space(7.);
+                ui.add_space(4.);
                 ui.label(
                     RichText::new(if !self.snapshot.resources_ready {
-                        "Setup downloads everything needed · no Microsoft account or Minecraft installation required"
+                        "Downloads the game and resources. No account required."
                     } else if self.settings.offline_mode || !self.snapshot.owner {
-                        "Offline · uses installed resources; single-player and offline servers"
+                        "Ready for single-player and offline servers."
                     } else if self.settings.update_before_play {
-                        "Checks for updates; uses the prepared installed build if unavailable"
+                        "Checks for updates before playing."
                     } else {
                         "Using your locally installed game build"
                     })
-                    .size(10.)
+                    .size(11.)
                     .color(MUTED),
                 );
+                ui.add_space(4.);
+                if ui
+                    .link(RichText::new("Open game folder ↗").size(12.))
+                    .clicked()
+                {
+                    self.open(self.game_folder());
+                }
             });
         });
     }
@@ -720,31 +716,19 @@ impl Launcher {
         let (label, action) = if !self.engine_ready() || !self.snapshot.resources_ready {
             ("Download & set up Horizon", Action::Setup)
         } else if self.settings.offline_mode || !self.snapshot.owner {
-            ("Play offline  >", Action::Play)
+            ("Play offline", Action::Play)
         } else {
             (
                 if self.receipt.mods_dirty {
-                    "Build & play  >"
+                    "Build & play"
                 } else {
-                    "Play Horizon  >"
+                    "Play Horizon"
                 },
                 Action::Play,
             )
         };
         if primary(ui, label, !self.busy).clicked() {
             self.start(action);
-        }
-        ui.add_space(6.);
-        self.account_menu(ui, "play_account");
-        if ui
-            .add_enabled(
-                !self.busy,
-                egui::Checkbox::new(&mut self.settings.offline_mode, "Offline mode"),
-            )
-            .changed()
-        {
-            self.pending_check = false;
-            self.save();
         }
     }
 
@@ -831,7 +815,7 @@ impl Launcher {
         ui.add_enabled_ui(!self.busy, |ui| {
             egui::ComboBox::from_id_salt(id)
                 .selected_text(label)
-                .width(ui.available_width().min(280.))
+                .width(ui.available_width())
                 .show_ui(ui, |ui| {
                     if ui
                         .selectable_label(active == AccountChoice::Guest, "Guest · no account")
@@ -865,11 +849,11 @@ impl Launcher {
                     }
                 });
             ui.horizontal_wrapped(|ui| {
-                if ui.button("Create offline account").clicked() {
+                if ui.button("New offline profile").clicked() {
                     self.new_offline_account = true;
                     self.offline_account_error = None;
                 }
-                if ui.button("Microsoft sign-in (optional)").clicked() {
+                if ui.button("Microsoft sign-in").clicked() {
                     let mut settings = self.settings.clone();
                     settings.offline_mode = false;
                     if self.save_account_settings(settings) {
@@ -887,13 +871,32 @@ impl Launcher {
         card().show(ui, |ui| {
             ui.vertical(|ui| {
                 ui.set_width((width - card().total_margin().sum().x).max(0.));
-                ui.label(RichText::new("MINECRAFT ACCOUNT").size(10.).color(MUTED));
-                ui.add_space(17.);
+                if ui.ctx().content_rect().height() >= 560. {
+                    ui.set_min_height(250.);
+                }
+                ui.label(RichText::new("Player profile").size(16.).strong());
+                ui.add_space(8.);
                 if self.settings.offline_mode || !self.snapshot.owner {
-                    let name = self.settings.selected_offline_account.as_deref().unwrap_or("Guest");
-                    ui.label(RichText::new(name).size(17.).strong());
-                    ui.add_space(8.);
-                    ui.label(RichText::new("Local offline player · no sign-in required. Use the account menu to switch players or create an offline account.").size(12.).color(MUTED));
+                    let name = self
+                        .settings
+                        .selected_offline_account
+                        .as_deref()
+                        .unwrap_or("Guest");
+                    ui.horizontal(|ui| {
+                        let (rect, _) =
+                            ui.allocate_exact_size(Vec2::splat(38.), egui::Sense::hover());
+                        ui.painter()
+                            .rect_filled(rect, 8., Color32::from_rgb(45, 57, 49));
+                        cube(ui.painter(), rect.center() - egui::vec2(0., 5.), 11., GREEN);
+                        ui.vertical(|ui| {
+                            ui.label(RichText::new(name).size(16.).strong());
+                            ui.label(
+                                RichText::new("Local player · no sign-in needed")
+                                    .size(11.)
+                                    .color(MUTED),
+                            );
+                        });
+                    });
                 } else if let Some(account) = self
                     .snapshot
                     .accounts
@@ -909,16 +912,6 @@ impl Launcher {
                             ui.label(RichText::new("Microsoft account").size(11.).color(GREEN));
                         });
                     });
-                    ui.add_space(18.);
-                    ui.label(
-                        RichText::new(if self.snapshot.owner {
-                            "Java Edition ownership verified."
-                        } else {
-                            "Sign in again to verify game ownership."
-                        })
-                        .size(12.)
-                        .color(MUTED),
-                    );
                     if ui
                         .add_enabled(
                             !self.settings.offline_mode,
@@ -928,38 +921,32 @@ impl Launcher {
                     {
                         self.edit_skin(account);
                     }
-                } else {
-                    ui.label(RichText::new("Make yourself at home.").size(17.).strong());
-                    ui.add_space(8.);
-                    ui.label(
-                        RichText::new(
-                            "Connect the Microsoft account that owns Minecraft: Java Edition.",
-                        )
-                        .size(12.)
-                        .color(MUTED),
-                    );
-                    ui.add_space(14.);
-                    if ui
-                        .add_enabled(
-                            !self.busy && !self.settings.offline_mode,
-                            egui::Button::new("Sign in with Microsoft")
-                                .min_size(egui::vec2(180., 36.)),
-                        )
-                        .clicked()
-                    {
-                        self.start(Action::SignIn);
-                    }
                 }
-                ui.add_space(18.);
+                ui.add_space(10.);
+                self.account_menu(ui, "play_account");
+                if ui
+                    .add_enabled(
+                        !self.busy,
+                        egui::Checkbox::new(&mut self.settings.offline_mode, "Offline mode"),
+                    )
+                    .on_hover_text(
+                        "Use installed resources without sign-in, downloads, or update checks.",
+                    )
+                    .changed()
+                {
+                    self.pending_check = false;
+                    self.save();
+                }
+                ui.add_space(8.);
                 ui.separator();
-                ui.add_space(9.);
+                ui.add_space(4.);
                 ui.horizontal_wrapped(|ui| {
                     ui.label(
                         RichText::new(format!("{} native mods", self.snapshot.mods.len()))
                             .size(12.)
                             .color(MUTED),
                     );
-                    if ui.link("Manage >").clicked() {
+                    if ui.link("Manage mods").clicked() {
                         self.page = Page::Mods;
                     }
                 });
@@ -970,17 +957,17 @@ impl Launcher {
     fn mods(&mut self, ui: &mut egui::Ui) {
         title(
             ui,
-            "A world of your own.",
-            "Import native Horizon mods from GitHub, then build them for your game.",
+            "Mods",
+            "Make your world your own with native Horizon mods.",
         );
         ui.add_space(20.);
         card().show(ui, |ui| {
             ui.set_width(ui.available_width());
-            ui.label(RichText::new("IMPORT FROM GITHUB").size(10.).color(ACCENT));
+            ui.label(RichText::new("Add a mod from GitHub").size(16.).strong());
             ui.add_space(12.);
             ui.add(egui::TextEdit::singleline(&mut self.mod_url).hint_text("https://github.com/owner/horizon-mod").desired_width(f32::INFINITY).margin(egui::vec2(12., 11.)));
             ui.add_space(8.);
-            ui.label(RichText::new("Repository, release tag, branch, or commit. Horizon native mods only; Java .jar mods are incompatible.").size(11.).color(MUTED));
+            ui.label(RichText::new("Paste a repository, branch, commit, or release URL. Java .jar mods are not supported.").size(12.).color(MUTED));
             ui.add_space(12.);
             ui.checkbox(&mut self.trust_mod, "I trust this source to run native code on my computer.");
             ui.add_space(10.);
@@ -988,7 +975,7 @@ impl Launcher {
             if !self.mod_url.trim().is_empty() && let Err(error) = &valid {
                 ui.label(RichText::new(error.to_string()).size(11.).color(ACCENT));
             }
-            if primary(ui, "Import & build mod  >", !self.busy && self.trust_mod && valid.is_ok()).clicked() {
+            if ui.add_enabled(!self.busy && self.trust_mod && valid.is_ok(), egui::Button::new(RichText::new("Import & build").strong().color(BG)).fill(ACCENT).min_size(egui::vec2(148., 38.))).clicked() {
                 self.trust_mod = false;
                 self.start(Action::ImportMod(self.mod_url.trim().to_string()));
             }
@@ -1043,14 +1030,13 @@ impl Launcher {
                 ui.set_width(ui.available_width());
                 ui.add_space(22.);
                 ui.vertical_centered(|ui| {
-                    ui.label(
-                        RichText::new("Your mod collection starts here.")
-                            .size(17.)
-                            .color(TEXT),
-                    );
+                    let (rect, _) = ui.allocate_exact_size(Vec2::splat(44.), egui::Sense::hover());
+                    cube(ui.painter(), rect.center() - egui::vec2(0., 6.), 17., GREEN);
+                    ui.add_space(8.);
+                    ui.label(RichText::new("No mods installed yet").size(17.).color(TEXT));
                     ui.add_space(5.);
                     ui.label(
-                        RichText::new("Paste a GitHub link above to make this world yours.")
+                        RichText::new("Add your first mod using a GitHub link above.")
                             .size(12.)
                             .color(MUTED),
                     );
@@ -1061,8 +1047,8 @@ impl Launcher {
         for item in self.snapshot.mods.clone() {
             card().show(ui, |ui| {
                 ui.set_width(ui.available_width());
-                ui.horizontal(|ui| {
-                    let details_width = (ui.available_width() - 160.).max(180.);
+                ui.horizontal_wrapped(|ui| {
+                    let details_width = (ui.available_width() - 160.).max(160.);
                     ui.vertical(|ui| {
                         ui.set_max_width(details_width);
                         ui.label(RichText::new(&item.id).size(16.).strong());
@@ -1079,7 +1065,7 @@ impl Launcher {
                         {
                             self.confirm = Some(Confirm::Remove(item.id.clone()));
                         }
-                        if ui.link("Source >").clicked() {
+                        if ui.link("Source ↗").clicked() {
                             self.open(&item.source_url);
                         }
                     });
@@ -1094,8 +1080,8 @@ impl Launcher {
     fn updates(&mut self, ui: &mut egui::Ui) {
         title(
             ui,
-            "Keep your world moving.",
-            "Updates for MCRS Launcher, the Horizon engine, and game builds.",
+            "Updates",
+            "Keep your launcher and Horizon game up to date.",
         );
         ui.add_space(22.);
         self.launcher_updates(ui);
@@ -1174,8 +1160,11 @@ impl Launcher {
     fn launcher_updates(&mut self, ui: &mut egui::Ui) {
         card().show(ui, |ui| {
             ui.set_width(ui.available_width());
-            ui.label(RichText::new("MCRS LAUNCHER").size(10.).color(ACCENT));
-            ui.label(format!("Running version: {}", env!("CARGO_PKG_VERSION")));
+            ui.horizontal_wrapped(|ui| {
+                ui.label(RichText::new("MCRS Launcher").size(17.).strong());
+                badge(ui, concat!("v", env!("CARGO_PKG_VERSION")), MUTED);
+            });
+            ui.add_space(8.);
             if updater::is_flatpak() {
                 ui.label("Update through your system software updater, then close and reopen MCRS. GitHub releases appear there after publication to the signed Flatpak repository.");
                 ui.horizontal_wrapped(|ui| {
@@ -1237,8 +1226,8 @@ impl Launcher {
     fn settings(&mut self, ui: &mut egui::Ui) {
         title(
             ui,
-            "Make it feel like yours.",
-            "A lightweight launcher, with the controls that matter.",
+            "Settings",
+            "Your launcher, the way you like it. Changes save automatically.",
         );
         ui.add_space(20.);
         let before = serde_json::to_string(&self.settings).unwrap_or_default();
@@ -1248,11 +1237,28 @@ impl Launcher {
         );
         card().show(ui, |ui| {
             ui.set_width(ui.available_width());
-            ui.label(RichText::new("PERFORMANCE & UPDATES").size(10.).color(ACCENT));
+            ui.label(RichText::new("General").size(17.).strong());
             ui.add_space(12.);
-            ui.add_enabled(!self.busy, egui::Checkbox::new(&mut self.settings.offline_mode, "Offline mode"));
-            ui.label(RichText::new("Offline play reuses prepared files. Download & set up Horizon fetches missing files when requested, without signing in.").size(11.).color(MUTED));
-            ui.checkbox(&mut self.settings.minimize_on_play, "Minimize the launcher while playing");
+            ui.add_enabled(
+                !self.busy,
+                egui::Checkbox::new(&mut self.settings.offline_mode, "Offline mode"),
+            );
+            ui.label(
+                RichText::new("Play with installed resources, without sign-in or update checks.")
+                    .size(12.)
+                    .color(MUTED),
+            );
+            ui.add_space(6.);
+            ui.checkbox(
+                &mut self.settings.minimize_on_play,
+                "Minimize the launcher while playing",
+            );
+        });
+        ui.add_space(16.);
+        card().show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.label(RichText::new("Game updates").size(17.).strong());
+            ui.add_space(12.);
             ui.add_enabled_ui(!self.settings.offline_mode, |ui| {
                 ui.horizontal_wrapped(|ui| {
                     ui.label("Automatic update checks");
@@ -1272,19 +1278,27 @@ impl Launcher {
                         });
                 });
                 ui.checkbox(&mut self.settings.update_before_play, "Check for updates and install before playing");
-                ui.label(RichText::new("Never also turns off checks before playing. You can still check manually in Updates → Check now.").size(11.).color(MUTED));
+                ui.label(RichText::new("Choose Never for manual updates. Check for new builds on the Updates page.").size(12.).color(MUTED));
             });
+            if self.settings.offline_mode {
+                ui.label(RichText::new("Turn off Offline mode to change update preferences.").size(12.).color(MUTED));
+            }
+        });
+        ui.add_space(16.);
+        card().show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.label(RichText::new("Native mod builds").size(17.).strong());
             ui.add_space(12.);
             ui.horizontal_wrapped(|ui| {
-                ui.label("Native mod build profile");
-                egui::ComboBox::from_id_salt("build_profile").selected_text(self.settings.build_profile.argument()).show_ui(ui, |ui| {
+                ui.label("Build profile");
+                egui::ComboBox::from_id_salt("build_profile").selected_text(match self.settings.build_profile { BuildProfile::Performance => "Performance", BuildProfile::Release => "Release", BuildProfile::Dev => "Development" }).show_ui(ui, |ui| {
                     ui.selectable_value(&mut self.settings.build_profile, BuildProfile::Performance, "Performance · fast incremental rebuilds");
                     ui.selectable_value(&mut self.settings.build_profile, BuildProfile::Release, "Release · thin LTO, slower builds");
                     ui.selectable_value(&mut self.settings.build_profile, BuildProfile::Dev, "Development · quickest build, slower game");
                 });
             });
             ui.add_space(6.);
-            ui.label(RichText::new("Performance is recommended for everyday play. Rebuild mods after changing this setting.").size(11.).color(MUTED));
+            ui.label(RichText::new("Performance is recommended for everyday play. Rebuild mods after changing this setting.").size(12.).color(MUTED));
         });
         if before != serde_json::to_string(&self.settings).unwrap_or_default() {
             self.pending_check = false;
@@ -1301,7 +1315,7 @@ impl Launcher {
         ui.add_space(16.);
         card().show(ui, |ui| {
             ui.set_width(ui.available_width());
-            ui.label(RichText::new("ACCOUNTS").size(10.).color(ACCENT));
+            ui.label(RichText::new("Player profiles").size(17.).strong());
             ui.add_space(10.);
             self.account_menu(ui, "settings_account");
             for name in self.settings.offline_accounts.clone() {
@@ -1321,7 +1335,7 @@ impl Launcher {
             }
             ui.label(RichText::new("Offline profiles are local names. Removing one keeps your worlds and game files.").size(11.).color(MUTED));
             for account in self.snapshot.accounts.clone() {
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     self.profile_avatar(ui, &account, 28.);
                     ui.label(RichText::new(&account.name).strong());
                     if account.selected { badge(ui, "ACTIVE", GREEN); }
@@ -1333,7 +1347,6 @@ impl Launcher {
                 });
                 ui.add_space(8.);
             }
-            if ui.add_enabled(!self.busy && !self.settings.offline_mode, egui::Button::new("Sign in with Microsoft")).clicked() { self.start(Action::SignIn); }
             if self.engine_ready() && !self.snapshot.sign_in_configured {
                 ui.label(RichText::new("This engine has no Microsoft application ID configured. Use an official release, or set HORIZON_MSA_CLIENT_ID before starting MCRS.").size(11.).color(ACCENT));
             }
@@ -1343,7 +1356,7 @@ impl Launcher {
         ui.add_space(16.);
         card().show(ui, |ui| {
             ui.set_width(ui.available_width());
-            ui.label(RichText::new("STORAGE & SUPPORT").size(10.).color(ACCENT));
+            ui.label(RichText::new("Storage & support").size(17.).strong());
             ui.add_space(10.);
             ui.label(
                 RichText::new(self.paths.root.display().to_string())
@@ -1678,23 +1691,6 @@ impl eframe::App for Launcher {
                     }),
             )
             .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(
-                        RichText::new(match self.page {
-                            Page::Play => "LET'S PLAY",
-                            Page::Mods => "YOUR MODS",
-                            Page::Updates => "WHAT'S NEW",
-                            Page::Settings => "PREFERENCES",
-                        })
-                        .size(10.)
-                        .color(MUTED),
-                    );
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        dot(ui, if self.engine_ready() { GREEN } else { MUTED });
-                        ui.label(RichText::new("HORIZON ENGINE").size(9.).color(MUTED));
-                    });
-                });
-                ui.add_space(20.);
                 egui::ScrollArea::vertical()
                     .id_salt(match self.page {
                         Page::Play => "play",
@@ -1748,18 +1744,32 @@ fn configure(ctx: &egui::Context) {
     visuals.extreme_bg_color = BG;
     visuals.faint_bg_color = PANEL;
     visuals.selection.bg_fill = Color32::from_rgb(95, 66, 43);
+    visuals.selection.stroke = Stroke::new(1_f32, ACCENT);
     visuals.hyperlink_color = ACCENT;
-    visuals.widgets.inactive.bg_fill = Color32::from_rgb(39, 45, 44);
-    visuals.widgets.inactive.weak_bg_fill = Color32::from_rgb(39, 45, 44);
+    visuals.widgets.inactive.bg_fill = Color32::from_rgb(36, 43, 41);
+    visuals.widgets.inactive.weak_bg_fill = Color32::from_rgb(36, 43, 41);
     visuals.widgets.inactive.bg_stroke = Stroke::new(1_f32, LINE);
-    visuals.widgets.hovered.bg_fill = Color32::from_rgb(62, 62, 49);
-    visuals.widgets.hovered.weak_bg_fill = Color32::from_rgb(62, 62, 49);
-    visuals.widgets.hovered.bg_stroke = Stroke::new(1_f32, ACCENT);
+    visuals.widgets.hovered.bg_fill = Color32::from_rgb(48, 57, 51);
+    visuals.widgets.hovered.weak_bg_fill = Color32::from_rgb(48, 57, 51);
+    visuals.widgets.hovered.bg_stroke = Stroke::new(1_f32, MUTED);
+    visuals.widgets.active.bg_fill = Color32::from_rgb(58, 67, 58);
+    visuals.widgets.active.weak_bg_fill = Color32::from_rgb(58, 67, 58);
+    visuals.widgets.active.bg_stroke = Stroke::new(1_f32, ACCENT);
+    visuals.widgets.noninteractive.bg_stroke = Stroke::new(1_f32, LINE);
+    for widget in [
+        &mut visuals.widgets.inactive,
+        &mut visuals.widgets.hovered,
+        &mut visuals.widgets.active,
+    ] {
+        widget.corner_radius = CornerRadius::same(4);
+    }
     ctx.set_visuals(visuals);
     ctx.style_mut(|s| {
         s.wrap_mode = Some(egui::TextWrapMode::Wrap);
-        s.spacing.item_spacing = egui::vec2(9., 9.);
+        s.spacing.item_spacing = egui::vec2(8., 8.);
         s.spacing.button_padding = egui::vec2(12., 8.);
+        s.spacing.interact_size.y = 24.;
+        s.spacing.combo_width = 220.;
         s.text_styles
             .insert(egui::TextStyle::Body, FontId::proportional(13.));
         s.text_styles
@@ -1767,12 +1777,85 @@ fn configure(ctx: &egui::Context) {
     });
 }
 
+fn navigation_item(ui: &mut egui::Ui, page: Page, active: bool) -> egui::Response {
+    let response = ui.add_sized(
+        [ui.available_width(), 44.],
+        egui::Button::new("")
+            .fill(if active {
+                Color32::from_rgb(49, 43, 36)
+            } else {
+                Color32::TRANSPARENT
+            })
+            .stroke(Stroke::NONE)
+            .corner_radius(8),
+    );
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), page.label())
+    });
+    let color = if active {
+        ACCENT
+    } else if response.hovered() || response.has_focus() {
+        TEXT
+    } else {
+        MUTED
+    };
+    let center = response.rect.left_center() + egui::vec2(22., 0.);
+    let painter = ui.painter();
+    let stroke = Stroke::new(1.5_f32, color);
+    match page {
+        Page::Play => {
+            painter.add(egui::Shape::convex_polygon(
+                vec![
+                    center + egui::vec2(-5., -7.),
+                    center + egui::vec2(7., 0.),
+                    center + egui::vec2(-5., 7.),
+                ],
+                color,
+                Stroke::NONE,
+            ));
+        }
+        Page::Mods => cube(painter, center - egui::vec2(0., 4.), 8., color),
+        Page::Updates => {
+            painter.circle_stroke(center, 7., stroke);
+            painter.line_segment(
+                [center + egui::vec2(0., 4.), center + egui::vec2(0., -4.)],
+                stroke,
+            );
+            painter.line_segment(
+                [center + egui::vec2(-3., -1.), center + egui::vec2(0., -4.)],
+                stroke,
+            );
+            painter.line_segment(
+                [center + egui::vec2(3., -1.), center + egui::vec2(0., -4.)],
+                stroke,
+            );
+        }
+        Page::Settings => {
+            for (y, offset) in [(-6., 3.), (0., -3.), (6., 1.)] {
+                painter.line_segment(
+                    [center + egui::vec2(-8., y), center + egui::vec2(8., y)],
+                    stroke,
+                );
+                painter.circle_filled(center + egui::vec2(offset, y), 2.5, color);
+            }
+        }
+    }
+    painter.text(
+        response.rect.left_center() + egui::vec2(44., 0.),
+        egui::Align2::LEFT_CENTER,
+        page.label(),
+        FontId::proportional(14.),
+        color,
+    );
+    response
+}
+
 fn card() -> Frame {
     Frame::new()
         .fill(CARD)
         .stroke(Stroke::new(1_f32, LINE))
-        .corner_radius(9)
-        .inner_margin(18)
+        .corner_radius(12)
+        .inner_margin(20)
 }
 
 fn primary(ui: &mut egui::Ui, text: &str, enabled: bool) -> egui::Response {
@@ -1780,24 +1863,23 @@ fn primary(ui: &mut egui::Ui, text: &str, enabled: bool) -> egui::Response {
         enabled,
         egui::Button::new(RichText::new(text).size(14.).strong().color(BG))
             .fill(ACCENT)
-            .corner_radius(5)
-            .min_size(egui::vec2(ui.available_width(), 44.)),
+            .corner_radius(7)
+            .min_size(egui::vec2(ui.available_width(), 46.)),
     )
 }
 
 fn title(ui: &mut egui::Ui, text: &str, description: &str) {
-    ui.label(RichText::new(text).size(29.).strong());
-    ui.add_space(5.);
+    ui.label(RichText::new(text).size(28.).strong());
     ui.label(RichText::new(description).size(13.).color(MUTED));
 }
 
 fn badge(ui: &mut egui::Ui, text: &str, color: Color32) {
     Frame::new()
         .fill(color.gamma_multiply(0.13))
-        .corner_radius(3)
+        .corner_radius(5)
         .inner_margin(Margin::symmetric(7, 4))
         .show(ui, |ui| {
-            ui.label(RichText::new(text).size(9.).strong().color(color));
+            ui.label(RichText::new(text).size(10.).strong().color(color));
         });
 }
 
@@ -1831,84 +1913,86 @@ fn cube(p: &egui::Painter, center: egui::Pos2, size: f32, color: Color32) {
 
 /// Static vector art is drawn by the native renderer: no images to decode, no animation loop.
 fn landscape(ui: &mut egui::Ui) {
-    let compact = ui.available_width() < 600. || ui.ctx().content_rect().height() < 600.;
-    let height = if compact { 152. } else { 208. };
+    let compact = ui.available_width() < 760.;
+    let height = if compact { 150. } else { 174. };
     let (rect, _) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), height),
         egui::Sense::hover(),
     );
     let p = ui.painter().with_clip_rect(rect);
-    p.rect_filled(rect, CornerRadius::same(9), Color32::from_rgb(38, 54, 48));
-    let origin = rect.right_top() + egui::vec2(-150., 58.);
-    p.circle_filled(origin, 31., Color32::from_rgb(211, 170, 110));
-    p.circle_stroke(
-        origin,
-        44.,
-        Stroke::new(1_f32, Color32::from_rgb(88, 99, 68)),
-    );
-    for (y, x, w) in [(38., 330., 56.), (70., 100., 43.), (25., 50., 60.)] {
-        p.rect_filled(
-            egui::Rect::from_min_size(rect.right_top() + egui::vec2(-x, y), egui::vec2(w, 5.)),
-            0.,
-            Color32::from_rgb(88, 101, 80),
+    p.rect_filled(rect, CornerRadius::same(12), Color32::from_rgb(33, 49, 42));
+    if !compact {
+        let origin = rect.right_top() + egui::vec2(-150., 58.);
+        p.circle_filled(origin, 31., Color32::from_rgb(211, 170, 110));
+        p.circle_stroke(
+            origin,
+            44.,
+            Stroke::new(1_f32, Color32::from_rgb(88, 99, 68)),
         );
-    }
-    // Back-to-front rows of isometric grass and stone blocks.
-    for row in 0..9 {
-        for col in 0..13 {
-            let x = rect.right() - 330. + col as f32 * 26. - row as f32 * 23.;
-            let y = rect.top() + 121. + row as f32 * 14.;
-            let height = ((col * 7 + row * 11) % 5) as f32 * 7.;
-            let water = (4..8).contains(&col) && row < 5;
-            let color = if water {
-                Color32::from_rgb(74, 125, 121)
-            } else if (col + row) % 3 == 0 {
-                Color32::from_rgb(115, 139, 86)
-            } else {
-                Color32::from_rgb(94, 123, 76)
-            };
-            cube(&p, egui::pos2(x, y - height), 24., color);
-            if !water && (col * 3 + row * 5) % 17 == 0 {
-                let trunk = egui::pos2(x, y - height - 21.);
-                cube(&p, trunk, 6., Color32::from_rgb(105, 85, 59));
-                cube(
-                    &p,
-                    trunk - egui::vec2(0., 22.),
-                    19.,
-                    Color32::from_rgb(54, 90, 63),
-                );
-                cube(
-                    &p,
-                    trunk - egui::vec2(0., 39.),
-                    14.,
-                    Color32::from_rgb(65, 105, 68),
-                );
+        for (y, x, w) in [(38., 330., 56.), (70., 100., 43.), (25., 50., 60.)] {
+            p.rect_filled(
+                egui::Rect::from_min_size(rect.right_top() + egui::vec2(-x, y), egui::vec2(w, 5.)),
+                0.,
+                Color32::from_rgb(88, 101, 80),
+            );
+        }
+        // Back-to-front rows of isometric grass and stone blocks.
+        for row in 0..9 {
+            for col in 0..13 {
+                let x = rect.right() - 330. + col as f32 * 26. - row as f32 * 23.;
+                let y = rect.top() + 106. + row as f32 * 14.;
+                let height = ((col * 7 + row * 11) % 5) as f32 * 7.;
+                let water = (4..8).contains(&col) && row < 5;
+                let color = if water {
+                    Color32::from_rgb(74, 125, 121)
+                } else if (col + row) % 3 == 0 {
+                    Color32::from_rgb(115, 139, 86)
+                } else {
+                    Color32::from_rgb(94, 123, 76)
+                };
+                cube(&p, egui::pos2(x, y - height), 24., color);
+                if !water && (col * 3 + row * 5) % 17 == 0 {
+                    let trunk = egui::pos2(x, y - height - 21.);
+                    cube(&p, trunk, 6., Color32::from_rgb(105, 85, 59));
+                    cube(
+                        &p,
+                        trunk - egui::vec2(0., 22.),
+                        19.,
+                        Color32::from_rgb(54, 90, 63),
+                    );
+                    cube(
+                        &p,
+                        trunk - egui::vec2(0., 39.),
+                        14.,
+                        Color32::from_rgb(65, 105, 68),
+                    );
+                }
             }
         }
     }
     // Quiet left side keeps the title readable over the landscape.
     p.rect_filled(
         egui::Rect::from_min_max(rect.min, egui::pos2(rect.left() + 300., rect.bottom())),
-        9.,
-        Color32::from_rgb(38, 54, 48),
+        12.,
+        Color32::from_rgb(33, 49, 42),
     );
     let x = rect.left() + 27.;
     p.text(
-        egui::pos2(x, rect.top() + if compact { 18. } else { 28. }),
+        egui::pos2(x, rect.top() + 22.),
         egui::Align2::LEFT_TOP,
-        "SAME WORLD. NEW POSSIBILITIES.",
-        FontId::proportional(9.),
+        "POWERED BY HORIZON",
+        FontId::proportional(10.),
         GREEN,
     );
     p.text(
-        egui::pos2(x, rect.top() + if compact { 40. } else { 57. }),
+        egui::pos2(x, rect.top() + 46.),
         egui::Align2::LEFT_TOP,
         "A familiar world.\nA new horizon.",
-        FontId::proportional(if compact { 26. } else { 32. }),
+        FontId::proportional(if compact { 26. } else { 30. }),
         TEXT,
     );
     p.text(
-        egui::pos2(x, rect.bottom() - if compact { 26. } else { 31. }),
+        egui::pos2(x, rect.bottom() - 26.),
         egui::Align2::LEFT_TOP,
         "Your Minecraft journey, in Rust.",
         FontId::proportional(12.),

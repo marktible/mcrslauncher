@@ -80,4 +80,19 @@ Application data is retained. The public key is included in the installation des
 
 Only releases published into the signed repository become Flatpak updates. Maintainers publish a verified GitHub release with `python3 scripts/publish-flatpak-repo.py --tag vVERSION --push`; see [releasing](releasing.md). A GitHub release by itself remains a standalone download.
 
+### Signing key change in 0.2.10
+
+The repository signing key changed with 0.2.10. New installations use the updated key automatically. Existing installations must import the new public key once before updating. Its fingerprint is `A1EA F8BB 930E 352D 62BD 249C 9A32 47C5 F31B 2652`.
+
+Download and inspect the public key, then import it into the existing remote:
+
+```sh
+curl -fL https://raw.githubusercontent.com/marktible/mcrslauncher/main/packaging/flatpak/mcrslauncher.gpg -o /tmp/mcrslauncher-public.gpg
+gpg --show-keys --with-fingerprint /tmp/mcrslauncher-public.gpg
+flatpak remote-modify --user --gpg-import=/tmp/mcrslauncher-public.gpg mcrslauncher
+flatpak update --user io.github.marktible.MCRSLauncher
+```
+
+Use `--system` instead of `--user` if the remote and app are installed system-wide. If the remote has another name, use the origin shown by `flatpak info --show-origin io.github.marktible.MCRSLauncher`. This imports the new key while keeping signature verification enabled and preserves application data.
+
 Uninstall the app with `flatpak uninstall --user io.github.marktible.MCRSLauncher`. Flatpak retains application data unless explicitly asked to remove it.

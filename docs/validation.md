@@ -1,5 +1,13 @@
 # Validation — 2026-11-04
 
+## UI cleanup and signing key — 2026-11-16
+
+Version 0.2.10 consolidates Play's account controls into one player panel, simplifies navigation and page headings, and groups settings into focused sections. Inspected all four pages in the actual native desktop app at 1140×780 and 480×360 using isolated application data. Also inspected Play at 700×700 and 1140×360. The compact Play layout keeps the setup/play button visible at the minimum window size. The README preview now shows the refreshed interface.
+
+All 65 default tests pass; the two opt-in upstream downloads were not run for this presentation change. Formatting, Clippy with warnings denied, the Flatpak Cargo source-lock check, and AppStream metadata validation pass.
+
+Generated a dedicated Ed25519 Flatpak signing key on this PC outside the checkout, with private-directory permissions restricted to the owner. Confirmed both Flatpak descriptors embed the exact committed public export and verified a detached test signature using only that public key. The key fingerprint and one-time migration for existing clients are documented in the Flatpak guide and 0.2.10 release notes.
+
 ## Account-free first-time setup — 2026-11-14
 
 First-time setup now downloads the files pinned by the installed game's research lock directly from Mojang, validates checksums and sizes, and prepares resources using an application-managed Minecraft layout. No credentials or another launcher's files are needed. The public download cache is reused, failed files cannot replace a verified file, and independent downloads run with bounded concurrency. Explicit setup is available for a selected offline profile without changing its saved offline-play preference.
