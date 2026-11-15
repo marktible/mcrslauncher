@@ -28,7 +28,7 @@
     <release version="0.2.10" date="2026-11-16">
       <description>
         <p>Simplify navigation, consolidate player controls, and refresh the Play screen with clearer spacing and actions.</p>
-        <p>Organize settings into focused sections and refresh the Flatpak repository signing key.</p>
+        <p>Organize settings into focused sections and retain the project's original trusted Flatpak signing key.</p>
       </description>
     </release>
     <release version="0.2.9" date="2026-11-14">

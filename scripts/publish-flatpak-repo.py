@@ -45,6 +45,7 @@ def main():
     parser.add_argument("--site", type=Path, default=ROOT / "target/flatpak-update-publish")
     parser.add_argument("--gpg-home", type=Path, default=Path.home() / ".local/share/mcrslauncher-signing/flatpak-gnupg")
     parser.add_argument("--key", help="Signing fingerprint; defaults to flatpak-key-id next to the dedicated GPG home")
+    parser.add_argument("--additional-key", action="append", default=[], help="Also sign with this fingerprint; may be repeated")
     parser.add_argument("--push", action="store_true", help="Publish the generated flatpak-repo branch using the existing Git SSH connection")
     args = parser.parse_args()
     site, key_home = args.site.resolve(), args.gpg_home.resolve()
@@ -54,9 +55,13 @@ def main():
             parser.error("Use an empty directory or an existing generated MCRS update repository")
     if key_home.is_relative_to(site):
         parser.error("The private signing directory must be outside the published site")
-    key = args.key or (key_home.parent / "flatpak-key-id").read_text().strip()
-    if not re.fullmatch(r"[A-Fa-f0-9]{40,64}", key):
+    key = (args.key or (key_home.parent / "flatpak-key-id").read_text()).strip().upper()
+    additional_file = key_home.parent / "flatpak-additional-key-ids"
+    additional_keys = additional_file.read_text().split() if additional_file.exists() else []
+    signing_keys = list(dict.fromkeys([key, *(value.upper() for value in [*additional_keys, *args.additional_key])]))
+    if any(not re.fullmatch(r"[A-F0-9]{40,64}", value) for value in signing_keys):
         parser.error("Expected a signing-key fingerprint")
+    signing_arguments = ["--gpg-sign=" + value for value in signing_keys]
     public = subprocess.check_output(["gpg", "--homedir", str(key_home), "--batch", "--export", key])
     if not public or public != (ROOT / "packaging/flatpak/mcrslauncher.gpg").read_bytes():
         parser.error("Signing identity does not match the committed public update key")
@@ -85,7 +90,8 @@ def main():
             parser.error("Refusing to replace a branch that is not the generated MCRS update repository")
     record_path = site / "repository.json"
     previous = json.loads(record_path.read_text()) if record_path.exists() else {}
-    if previous.get("bundle_digest") != asset["digest"] or previous.get("signing_key") != key:
+    previous_keys = previous.get("signing_keys", [previous.get("signing_key")])
+    if previous.get("bundle_digest") != asset["digest"] or previous_keys != signing_keys:
         if not asset["browser_download_url"].startswith(f"https://github.com/{PROJECT}/releases/download/{tag}/"):
             parser.error("Unexpected release-download URL")
         data = fetch(asset["browser_download_url"])
@@ -98,14 +104,14 @@ def main():
             run("ostree", "--repo=" + str(repo), "init", "--mode=archive-z2")
         # Git snapshots omit empty directories, but OSTree's ref enumeration needs this one.
         (repo / "refs/remotes").mkdir(parents=True, exist_ok=True)
-        run("flatpak", "build-import-bundle", "--gpg-sign=" + key, "--gpg-homedir=" + str(key_home), "--no-summary-index", repo, bundle)
-        run("flatpak", "build-update-repo", "--gpg-sign=" + key, "--gpg-homedir=" + str(key_home),
+        run("flatpak", "build-import-bundle", *signing_arguments, "--gpg-homedir=" + str(key_home), "--no-summary-index", repo, bundle)
+        run("flatpak", "build-update-repo", *signing_arguments, "--gpg-homedir=" + str(key_home),
             "--gpg-import=" + str(ROOT / "packaging/flatpak/mcrslauncher.gpg"), "--no-summary-index",
             "--title=MCRS Launcher", "--default-branch=stable", f"--homepage=https://github.com/{PROJECT}",
             "--generate-static-deltas", "--static-delta-jobs=2", "--prune", "--prune-depth=2", repo)
     for name in ["mcrslauncher.gpg", "mcrslauncher.flatpakrepo", APP + ".flatpakref"]:
         shutil.copyfile(ROOT / "packaging/flatpak" / name, site / name)
-    record_path.write_text(json.dumps({"application": APP, "release": tag, "bundle_digest": asset["digest"], "signing_key": key, "url": URL}, indent=2) + "\n")
+    record_path.write_text(json.dumps({"application": APP, "release": tag, "bundle_digest": asset["digest"], "signing_key": key, "signing_keys": signing_keys, "url": URL}, indent=2) + "\n")
     (site / ".gitignore").write_text("/repo/.lock\n/repo/tmp/\n/repo/locks/\n")
     (site / "README.md").write_text(
         f"# MCRS Launcher Flatpak updates\n\nGenerated signed repository for {tag}.\n\n"

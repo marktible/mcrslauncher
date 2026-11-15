@@ -6,7 +6,9 @@ Version 0.2.10 consolidates Play's account controls into one player panel, simpl
 
 All 65 default tests pass; the two opt-in upstream downloads were not run for this presentation change. Formatting, Clippy with warnings denied, the Flatpak Cargo source-lock check, and AppStream metadata validation pass.
 
-Generated a dedicated Ed25519 Flatpak signing key on this PC outside the checkout, with private-directory permissions restricted to the owner. Confirmed both Flatpak descriptors embed the exact committed public export and verified a detached test signature using only that public key. The key fingerprint and one-time migration for existing clients are documented in the Flatpak guide and 0.2.10 release notes.
+Restored the original Ed25519 Flatpak signing identity from the maintainer's backup, confirmed it matches the previously published public key, and verified a detached signature using that public key. Moved the backup out of Downloads into `~/.local/share/mcrslauncher-signing/restored-original-key/`, with directories restricted to mode 0700 and files to 0600. The active GPG home contains the restored original key and the temporary replacement key; the original is selected as the primary identity. Both installation descriptors embed the original public key. The publisher supports additional signatures so clients trusting either identity can verify the repository during the transition.
+
+Repackaged the local Flatpak with the corrected metadata; its executable and native-build prerequisites pass inside the Freedesktop SDK runtime. Exercised the actual publisher against an isolated release-metadata fixture and the rebuilt local bundle. Two independent OSTree clients, each trusting only one of the keys, verified both the signed summary and application commit.
 
 ## Account-free first-time setup — 2026-11-14
 

@@ -82,9 +82,9 @@ Only releases published into the signed repository become Flatpak updates. Maint
 
 ### Signing key change in 0.2.10
 
-The repository signing key changed with 0.2.10. New installations use the updated key automatically. Existing installations must import the new public key once before updating. Its fingerprint is `A1EA F8BB 930E 352D 62BD 249C 9A32 47C5 F31B 2652`.
+The reissued 0.2.10 uses the project's original signing key, restored from the maintainer's backup. Existing installations retain their original trusted key. Its fingerprint is `2D49 1F55 DAA3 468A 6B08 E818 6B28 52C4 283B 0388`.
 
-Download and inspect the public key, then import it into the existing remote:
+The repository also carries a compatibility signature for installations that used the temporary replacement key during the first publication of 0.2.10. Both groups can verify the update. To refresh a remote's trusted public key manually, download and inspect the original public key, then import it:
 
 ```sh
 curl -fL https://raw.githubusercontent.com/marktible/mcrslauncher/main/packaging/flatpak/mcrslauncher.gpg -o /tmp/mcrslauncher-public.gpg
@@ -93,6 +93,6 @@ flatpak remote-modify --user --gpg-import=/tmp/mcrslauncher-public.gpg mcrslaunc
 flatpak update --user io.github.marktible.MCRSLauncher
 ```
 
-Use `--system` instead of `--user` if the remote and app are installed system-wide. If the remote has another name, use the origin shown by `flatpak info --show-origin io.github.marktible.MCRSLauncher`. This imports the new key while keeping signature verification enabled and preserves application data.
+Use `--system` instead of `--user` if the remote and app are installed system-wide. If the remote has another name, use the origin shown by `flatpak info --show-origin io.github.marktible.MCRSLauncher`. This imports the original key while keeping signature verification enabled and preserves application data.
 
 Uninstall the app with `flatpak uninstall --user io.github.marktible.MCRSLauncher`. Flatpak retains application data unless explicitly asked to remove it.
