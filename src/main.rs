@@ -3,7 +3,16 @@
 mod ui;
 
 fn main() -> eframe::Result {
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    #[cfg(windows)]
+    if let Some(code) = mcrslauncher::updater::windows::run_if_requested(
+        &std::env::args_os().skip(1).collect::<Vec<_>>(),
+    ) {
+        std::process::exit(code);
+    }
+    let args: Vec<String> = std::env::args_os()
+        .skip(1)
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect();
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
         println!(
             "MCRS Launcher {}\n\nUsage: mcrslauncher [--page play|mods|updates|settings]\n\nMCRSLAUNCHER_HOME sets the application data folder.",

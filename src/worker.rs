@@ -215,7 +215,22 @@ fn execute_with_catalog(
         Action::CheckLauncherUpdate => {
             let release = updater::check(&engine.client, &engine.cancel, report)?;
             let newer = release.newer_than(env!("CARGO_PKG_VERSION"))?;
-            send(Event::LauncherRelease(release));
+            send(Event::LauncherRelease(release.clone()));
+            if newer
+                && settings.auto_update_launcher
+                && !updater::is_flatpak()
+                && release.asset.is_some()
+            {
+                let outcome = updater::install(
+                    &engine.paths,
+                    &engine.client,
+                    &release,
+                    &engine.cancel,
+                    report,
+                )?;
+                send(Event::LauncherUpdated(outcome));
+                return Ok("MCRS Launcher update ready. Restart from Updates to finish.".into());
+            }
             return Ok(if newer {
                 "MCRS Launcher update available"
             } else {
@@ -232,7 +247,7 @@ fn execute_with_catalog(
                 report,
             )?;
             let message = match &outcome {
-                UpdateOutcome::Installed(_) => {
+                UpdateOutcome::Installed(_) | UpdateOutcome::PendingRestart { .. } => {
                     "MCRS Launcher updated. Restart to use the new version.".into()
                 }
                 UpdateOutcome::Downloaded { reason, .. } => format!(

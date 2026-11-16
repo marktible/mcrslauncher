@@ -110,17 +110,20 @@ pub fn check(
 #[derive(Clone, Debug)]
 pub enum UpdateOutcome {
     Installed(PathBuf),
-    Downloaded { binary: PathBuf, reason: String },
+    PendingRestart {
+        binary: PathBuf,
+        destination: PathBuf,
+    },
+    Downloaded {
+        binary: PathBuf,
+        reason: String,
+    },
 }
 
 /// Write on the destination filesystem and commit with one rename. Failed writes leave
-/// the running executable intact. Windows keeps the download for replacement after exit.
+/// the running executable intact. On Windows this is called only after the launcher exits.
 fn replace_binary(source: &Path, destination: &Path, cancel: &AtomicBool) -> Result<()> {
     network::check_cancel(cancel)?;
-    ensure!(
-        !cfg!(windows),
-        "Close MCRS and replace mcrslauncher.exe with the downloaded copy"
-    );
     let parent = destination
         .parent()
         .context("Missing launcher installation folder")?;
@@ -219,8 +222,25 @@ pub fn install(
     report(Output::Stage(
         "Installing the verified launcher update".into(),
     ));
-    match replace_binary(&binary, &destination, cancel) {
-        Ok(()) => Ok(UpdateOutcome::Installed(destination)),
+    #[cfg(windows)]
+    let result = prepare_windows_update(&binary, &destination);
+    #[cfg(not(windows))]
+    let result = replace_binary(&binary, &destination, cancel);
+    match result {
+        Ok(()) => {
+            #[cfg(windows)]
+            {
+                let _ = staging.keep();
+                Ok(UpdateOutcome::PendingRestart {
+                    binary,
+                    destination,
+                })
+            }
+            #[cfg(not(windows))]
+            {
+                Ok(UpdateOutcome::Installed(destination))
+            }
+        }
         Err(error) => {
             network::check_cancel(cancel)?;
             let _ = staging.keep();
@@ -231,6 +251,52 @@ pub fn install(
         }
     }
 }
+
+#[cfg(windows)]
+fn prepare_windows_update(binary: &Path, destination: &Path) -> Result<()> {
+    // Check write access before asking the user to close the application.
+    let _probe = tempfile::NamedTempFile::new_in(
+        destination
+            .parent()
+            .context("Missing installation folder")?,
+    )
+    .context("The launcher installation folder is not writable")?;
+    fs::copy(
+        std::env::current_exe()?,
+        binary.with_file_name("mcrs-update-helper.exe"),
+    )?;
+    Ok(())
+}
+
+/// Launch the replacement helper before closing the GUI. Arguments are passed
+/// directly to the process, preserving Unicode paths without shell interpolation.
+pub fn restart(outcome: &UpdateOutcome) -> Result<()> {
+    match outcome {
+        UpdateOutcome::Installed(executable) => {
+            std::process::Command::new(executable)
+                .args(["--page", "updates"])
+                .spawn()?;
+        }
+        UpdateOutcome::PendingRestart {
+            binary,
+            destination,
+        } => {
+            #[cfg(windows)]
+            windows::start_helper(binary, destination)?;
+            #[cfg(not(windows))]
+            {
+                let _ = (binary, destination);
+                anyhow::bail!("Windows update helper is unavailable");
+            }
+        }
+        UpdateOutcome::Downloaded { .. } => anyhow::bail!("This update needs manual installation"),
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+#[path = "updater_windows.rs"]
+pub mod windows;
 
 #[cfg(test)]
 mod tests {

@@ -99,6 +99,7 @@ pub struct Launcher {
     pending_check: bool,
     checked_at: Option<SystemTime>,
     last_check: Instant,
+    last_launcher_check: Option<Instant>,
     playing: bool,
     new_offline_account: bool,
     offline_account_name: String,
@@ -160,6 +161,7 @@ impl Launcher {
             pending_check,
             checked_at: None,
             last_check: Instant::now(),
+            last_launcher_check: None,
             playing: false,
             new_offline_account: false,
             offline_account_name: String::new(),
@@ -177,6 +179,7 @@ impl Launcher {
         }
         let label = action.label().to_string();
         if matches!(action, Action::CheckLauncherUpdate) {
+            self.last_launcher_check = Some(Instant::now());
             self.launcher_release = None;
         }
         let mut settings = self.settings.clone();
@@ -352,6 +355,21 @@ impl Launcher {
             self.pending_check = false;
             self.last_check = Instant::now();
             self.start(Action::CheckUpdates);
+        }
+        if self.settings.auto_update_launcher
+            && !updater::is_flatpak()
+            && !self.settings.offline_mode
+            && self.launcher_update.is_none()
+        {
+            let remaining = self
+                .last_launcher_check
+                .map(|last| Duration::from_secs(3600).saturating_sub(last.elapsed()))
+                .unwrap_or_default();
+            if !self.busy && remaining.is_zero() {
+                self.last_launcher_check = Some(Instant::now());
+                self.start(Action::CheckLauncherUpdate);
+            }
+            ctx.request_repaint_after(remaining.max(Duration::from_secs(1)));
         }
         if let Some(interval) = self.settings.automatic_update_interval() {
             ctx.request_repaint_after(
@@ -1290,7 +1308,9 @@ impl Launcher {
                     .unwrap_or(false)
             });
             let (status, color) = match &self.launcher_update {
-                Some(UpdateOutcome::Installed(_)) => ("Restart to finish updating", GREEN),
+                Some(UpdateOutcome::Installed(_) | UpdateOutcome::PendingRestart { .. }) => {
+                    ("Restart to finish updating", GREEN)
+                }
                 Some(UpdateOutcome::Downloaded { .. }) => ("Update ready to install", GREEN),
                 None if self.settings.offline_mode => ("Offline mode", MUTED),
                 None if newer => ("Update available", ACCENT),
@@ -1311,17 +1331,15 @@ impl Launcher {
             ui.add_space(12.);
             let enabled = !self.busy && !self.settings.offline_mode;
             ui.horizontal_wrapped(|ui| {
-                if let Some(UpdateOutcome::Installed(executable)) = self.launcher_update.clone() {
-                    if update_action(ui, "Restart launcher", !self.busy, true).clicked() {
-                        match std::process::Command::new(executable)
-                            .args(["--page", "updates"])
-                            .spawn()
-                        {
-                            Ok(_) => ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close),
+                if let Some(
+                    outcome @ (UpdateOutcome::Installed(_) | UpdateOutcome::PendingRestart { .. }),
+                ) = self.launcher_update.clone()
+                {
+                    if update_action(ui, "Restart to update", !self.busy, true).clicked() {
+                        match updater::restart(&outcome) {
+                            Ok(()) => ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close),
                             Err(error) => {
-                                self.error = Some(format!(
-                                    "Could not restart MCRS. Close and reopen it: {error}"
-                                ))
+                                self.error = Some(format!("Could not restart MCRS: {error:#}"))
                             }
                         }
                     }
@@ -1435,6 +1453,20 @@ impl Launcher {
                 &mut self.settings.minimize_on_play,
                 "Minimize the launcher while playing",
             );
+        });
+        ui.add_space(16.);
+        card().show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.label(RichText::new("Launcher updates").size(17.).strong());
+            ui.add_space(12.);
+            if updater::is_flatpak() {
+                ui.label("Launcher updates are managed by your system software updater.");
+            } else {
+                if ui.checkbox(&mut self.settings.auto_update_launcher, "Automatically update MCRS Launcher").changed() {
+                    self.last_launcher_check = None;
+                }
+                ui.label(RichText::new("Check at startup and hourly, and download verified updates. Restart from Updates when ready. Offline mode pauses automatic updates.").size(12.).color(MUTED));
+            }
         });
         ui.add_space(16.);
         card().show(ui, |ui| {

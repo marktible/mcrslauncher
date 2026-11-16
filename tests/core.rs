@@ -661,3 +661,24 @@ esac"#;
     );
     assert_eq!(snapshot.accounts[0].skin.as_ref().unwrap().1, "slim");
 }
+
+#[test]
+fn launcher_auto_update_is_opt_in_and_persists_independently_of_game_updates() {
+    let old: Settings =
+        serde_json::from_str(r#"{"auto_check":false,"update_before_play":false}"#).unwrap();
+    assert!(!old.auto_update_launcher);
+    let folder = tempfile::tempdir().unwrap();
+    let paths = Paths {
+        root: folder.path().to_owned(),
+    };
+    let mut settings = old;
+    settings.auto_update_launcher = true;
+    paths.save_settings(&settings).unwrap();
+    let saved = paths.load_settings().unwrap();
+    assert!(saved.auto_update_launcher);
+    assert!(!saved.auto_check);
+    assert!(!saved.update_before_play);
+    settings.auto_update_launcher = false;
+    paths.save_settings(&settings).unwrap();
+    assert!(!paths.load_settings().unwrap().auto_update_launcher);
+}

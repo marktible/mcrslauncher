@@ -1,5 +1,12 @@
 # Validation — 2026-11-04
 
+## Windows launcher updates — 2026-11-16
+
+Version 0.2.12 adds an opt-in, persisted launcher auto-update preference independent of game updates. Native installations check at startup and hourly while online, download verified releases, and offer a user-controlled restart. Windows uses a copied helper, acknowledges its parent process handle before the GUI closes, waits for process exit, retries atomic executable replacement, and restores the previous executable if spawning the update fails. Update errors are retained in the staging folder and displayed by the helper. Flatpak keeps system-managed updates.
+
+Local formatting, Clippy, all 71 default tests, and the Flatpak Cargo source check pass. Two live upstream download tests remain opt-in and were not run for this change. Windows-specific tests cover waiting before replacement and rollback of an invalid executable; they run in the existing Windows CI job.
+
+
 ## Game lifetime and update UI — 2026-11-16
 
 Version 0.2.11 keeps the game worker alive after the native window is destroyed and waits for it after the GUI event loop returns. This retains the output readers and the parent process needed by Flatpak's sandbox lifetime. Explicit Stop game cancellation is unchanged; closing during preparation still cancels the process tree.

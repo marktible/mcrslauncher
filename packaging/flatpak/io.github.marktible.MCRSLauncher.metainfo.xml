@@ -25,6 +25,9 @@
   <url type="bugtracker">https://github.com/marktible/mcrslauncher/issues</url>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.2.12" date="2026-11-16">
+      <description><p>Add optional automatic launcher updates and automatic executable replacement on Windows after restarting.</p></description>
+    </release>
     <release version="0.2.11" date="2026-11-16">
       <description>
         <p>Keep a running game alive when the launcher window closes, including inside Flatpak.</p>
