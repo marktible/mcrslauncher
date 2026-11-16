@@ -42,8 +42,8 @@ impl BuildProfile {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum UpdateCheckInterval {
-    StartupOnly,
     #[default]
+    StartupOnly,
     Every15Minutes,
     Every30Minutes,
     EveryHour,

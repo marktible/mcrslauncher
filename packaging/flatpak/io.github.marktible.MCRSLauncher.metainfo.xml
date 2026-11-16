@@ -25,6 +25,12 @@
   <url type="bugtracker">https://github.com/marktible/mcrslauncher/issues</url>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.2.11" date="2026-11-16">
+      <description>
+        <p>Keep a running game alive when the launcher window closes, including inside Flatpak.</p>
+        <p>Check for updates at startup by default and simplify the Updates page with clear status cards and expandable release notes.</p>
+      </description>
+    </release>
     <release version="0.2.10" date="2026-11-16">
       <description>
         <p>Simplify navigation, consolidate player controls, and refresh the Play screen with clearer spacing and actions.</p>

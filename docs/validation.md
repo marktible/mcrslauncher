@@ -1,5 +1,15 @@
 # Validation — 2026-11-04
 
+## Game lifetime and update UI — 2026-11-16
+
+Version 0.2.11 keeps the game worker alive after the native window is destroyed and waits for it after the GUI event loop returns. This retains the output readers and the parent process needed by Flatpak's sandbox lifetime. Explicit Stop game cancellation is unchanged; closing during preparation still cancels the process tree.
+
+All 70 default tests pass, including regression tests that close the UI receiver while a game writes more than a pipe buffer, explicitly stop a game, cancel a background query on UI close, preserve saved update intervals, and display HTML release notes as readable text. A native desktop smoke test launched an isolated shell-based game fixture through the real Play button, closed the actual window, verified that game activity continued, and confirmed that the launcher process exited after the fixture game finished.
+
+The default update interval is now startup only. Inspected the real Updates page at 1140×780, 948×900, and 480×360 with isolated application data. The page uses separate launcher and game status cards, wrapping action rows, and collapsed notes and terminal commands.
+
+The same window-close smoke test passed in an actual Flatpak sandbox installed into an isolated test installation: it launched the fixture through Play, destroyed the launcher window, observed continued game heartbeats, and exited cleanly after the game finished. The real Flatpak Updates page was also checked at 1140×780, 948×1000, and 480×360 with startup-only checks and live release metadata. The user's existing game files were not used by these fixtures. The packaged release passes AppStream, runtime-executable, compiler, ALSA, and libudev prerequisite checks.
+
 ## UI cleanup and signing key — 2026-11-16
 
 Version 0.2.10 consolidates Play's account controls into one player panel, simplifies navigation and page headings, and groups settings into focused sections. Inspected all four pages in the actual native desktop app at 1140×780 and 480×360 using isolated application data. Also inspected Play at 700×700 and 1140×360. The compact Play layout keeps the setup/play button visible at the minimum window size. The README preview now shows the refreshed interface.

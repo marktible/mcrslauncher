@@ -46,7 +46,8 @@ Use `--page mods`, `--page updates`, or `--page settings` to open a page directl
 - Actual Minecraft skin heads, cached locally with their hat layer. **Change skin** opens a PNG picker and applies classic or slim skins to the signed-in Java Edition account.
 - GitHub native mod import from repository, branch, commit or release URLs; incremental builds, source links, removal with rebuilding, and explicit trust before importing new mod source.
 - Separate engine and game release discovery. Nightly is selected by default; immutable `nightly-<date>-<commit>` versions and asset digests detect new builds even when the GitHub tag stays `nightly`.
-- Configurable automatic update checks: never, startup only, or startup plus every 15 minutes, 30 minutes, or hour. Checks every 15 minutes and updates before play are enabled by default. Stable channel and manual checks are available.
+- Configurable automatic update checks: never, startup only, or startup plus every 15 minutes, 30 minutes, or hour. Startup-only checks and updates before play are enabled by default. Stable channel and manual checks are available.
+- Close the launcher window while a game is running and keep playing. The background worker drains game output until the game exits; **Stop game** still stops it explicitly. Closing during preparation or a download cancels that operation.
 - Native Rust rendering, idle rendering suspension, bounded process logs, background I/O and compilation, cancellation of process trees, and optional minimization during play.
 - Performance, release (thin LTO), and development build profiles. Performance is the default for fast incremental rebuilds without the development profile's game slowdown.
 
@@ -61,6 +62,10 @@ Flatpak installations offer **Open software updater** and a copyable `flatpak up
 Choose **Settings → Automatic update checks** to control startup and background checks. **Never** also turns off **Check for updates and install before playing**, so updating is manual through **Updates → Check now** and **Install latest build**. Checks before playing can be enabled separately. Changing the frequency restarts the timer, and your choice is saved across launches.
 
 **Updates** shows the chosen channel, latest game and engine builds, and release notes. **Install latest build** verifies the upstream game's signed checksums through Horizon's installer. The engine itself is checked against the SHA-256 digest published by the GitHub Releases API and verified locally before use. Unsigned source builds are never substituted for official releases.
+
+The Updates page separates MCRS Launcher and Horizon into compact status cards, placed side by side in wide windows and stacked in smaller windows. Each card has its own check and install controls. Release notes and Flatpak terminal commands expand when needed. HTML release notes are shown as readable text, with a link to their full formatting on GitHub.
+
+![Updates](assets/updates-preview.png)
 
 Enable **Offline mode** on Play or in Settings to start an installed, prepared game directly without Microsoft sign-in, account renewal, update checks, downloads, or mod builds. The preference persists across restarts. Cached skin heads remain available; skin changes and other online actions require turning offline mode off. Your online update preferences are kept for when you reconnect.
 

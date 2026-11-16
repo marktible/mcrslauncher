@@ -7,7 +7,7 @@ use crate::{
 use anyhow::{Result, ensure};
 use std::{
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicBool, Ordering},
         mpsc::{self, Receiver, SyncSender},
     },
@@ -73,16 +73,36 @@ pub struct Worker {
     pub events: Receiver<Event>,
     commands: SyncSender<(Action, Settings)>,
     cancel: Arc<AtomicBool>,
+    playing: Arc<AtomicBool>,
+}
+
+/// Keep the process and its sandbox alive after the window closes, until a running
+/// game exits. The worker continues draining its pipes without retaining the UI.
+#[derive(Clone, Default)]
+pub struct WorkerLifetime(Arc<Mutex<Option<thread::JoinHandle<()>>>>);
+
+impl WorkerLifetime {
+    pub fn wait(self) {
+        let worker = self.0.lock().unwrap_or_else(|e| e.into_inner()).take();
+        if let Some(worker) = worker {
+            let _ = worker.join();
+        }
+    }
 }
 
 impl Worker {
-    pub fn new(paths: Paths, context: eframe::egui::Context) -> Self {
+    pub fn new(paths: Paths, context: eframe::egui::Context, lifetime: &WorkerLifetime) -> Self {
         let (commands, inbox) = mpsc::sync_channel::<(Action, Settings)>(1);
         let (sender, events) = mpsc::sync_channel(512);
         let cancel = Arc::new(AtomicBool::new(false));
         let cancellation = cancel.clone();
-        thread::spawn(move || {
+        let playing = Arc::new(AtomicBool::new(false));
+        let game_running = playing.clone();
+        let worker = thread::spawn(move || {
             let send = |event: Event| {
+                if matches!(event, Event::Output(Output::Playing)) {
+                    game_running.store(true, Ordering::SeqCst);
+                }
                 // Logs are expendable; completion, login and state events must reach the UI.
                 if matches!(event, Event::Output(Output::Log(_))) {
                     let _ = sender.try_send(event);
@@ -101,6 +121,7 @@ impl Worker {
             while let Ok((action, settings)) = inbox.recv() {
                 let report = |output| send(Event::Output(output));
                 let result = execute(&engine, &action, &settings, &send, &report);
+                game_running.store(false, Ordering::SeqCst);
                 // Cancellation is consumed by the job, so the final snapshot can still load.
                 engine.cancel.store(false, Ordering::Relaxed);
                 if !matches!(
@@ -122,10 +143,12 @@ impl Worker {
                 send(Event::Done(result.map_err(|e| format!("{e:#}"))));
             }
         });
+        *lifetime.0.lock().unwrap_or_else(|e| e.into_inner()) = Some(worker);
         Self {
             events,
             commands,
             cancel,
+            playing,
         }
     }
 
@@ -143,7 +166,9 @@ impl Worker {
 
 impl Drop for Worker {
     fn drop(&mut self) {
-        self.cancel();
+        if !self.playing.load(Ordering::SeqCst) {
+            self.cancel();
+        }
     }
 }
 
@@ -446,6 +471,88 @@ test "$1" = play
 
     fn unavailable() -> Result<Catalog> {
         anyhow::bail!("GitHub: Temporary failure in name resolution")
+    }
+
+    fn playing_worker() -> (tempfile::TempDir, Worker, WorkerLifetime, Paths) {
+        let (temporary, engine) = installed(false, true, false);
+        let binary = engine
+            .paths
+            .engine_home()
+            .join("versions/native-test/horizon-client");
+        fs::write(&binary, "#!/bin/sh\nprintf started > game-started\nfor tick in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do\n  printf '%16384s\\n' game-output\n  sleep 0.025\ndone\nprintf survived > game-finished\n").unwrap();
+        fs::set_permissions(&binary, fs::Permissions::from_mode(0o755)).unwrap();
+        let paths = engine.paths.clone();
+        let lifetime = WorkerLifetime::default();
+        let worker = Worker::new(paths.clone(), eframe::egui::Context::default(), &lifetime);
+        worker
+            .start(
+                Action::Play,
+                Settings {
+                    offline_mode: true,
+                    ..Settings::default()
+                },
+            )
+            .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !paths.game_home().join("game-started").exists() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "The fixture game did not start"
+            );
+            thread::sleep(std::time::Duration::from_millis(10));
+        }
+        (temporary, worker, lifetime, paths)
+    }
+
+    #[test]
+    fn closing_the_ui_keeps_the_game_and_output_readers_alive_until_it_exits() {
+        let (_temporary, worker, lifetime, paths) = playing_worker();
+        drop(worker);
+        lifetime.wait();
+        assert_eq!(
+            fs::read_to_string(paths.game_home().join("game-finished")).unwrap(),
+            "survived"
+        );
+    }
+
+    #[test]
+    fn explicit_stop_still_terminates_the_game_after_the_ui_closes() {
+        let (_temporary, worker, lifetime, paths) = playing_worker();
+        worker.cancel();
+        drop(worker);
+        lifetime.wait();
+        assert!(!paths.game_home().join("game-finished").exists());
+    }
+
+    #[test]
+    fn closing_the_ui_still_cancels_background_preparation() {
+        let (_temporary, engine) = installed(false, false, false);
+        fs::write(engine.paths.engine(), "#!/bin/sh\nprintf started > \"$HORIZON_LAUNCHER_HOME/query-started\"\nsleep 0.7\nprintf finished > \"$HORIZON_LAUNCHER_HOME/query-finished\"\nprintf '{}'\n").unwrap();
+        let mut receipt = engine.receipt();
+        receipt.executable_sha256 = github::digest_hex(&fs::read(engine.paths.engine()).unwrap());
+        model::atomic_write(
+            &engine.paths.receipt(),
+            &serde_json::to_vec(&receipt).unwrap(),
+        )
+        .unwrap();
+        let lifetime = WorkerLifetime::default();
+        let worker = Worker::new(
+            engine.paths.clone(),
+            eframe::egui::Context::default(),
+            &lifetime,
+        );
+        worker.start(Action::Refresh, Settings::default()).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !engine.paths.engine_home().join("query-started").exists() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "The fixture query did not start"
+            );
+            thread::sleep(std::time::Duration::from_millis(10));
+        }
+        drop(worker);
+        lifetime.wait();
+        assert!(!engine.paths.engine_home().join("query-finished").exists());
     }
 
     #[test]

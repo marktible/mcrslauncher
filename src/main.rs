@@ -28,11 +28,17 @@ fn main() -> eframe::Result {
         vsync: true,
         ..Default::default()
     };
-    eframe::run_native(
+    let lifetime = mcrslauncher::worker::WorkerLifetime::default();
+    let app_lifetime = lifetime.clone();
+    let result = eframe::run_native(
         "MCRS Launcher",
         options,
-        Box::new(move |cc| Ok(Box::new(ui::Launcher::new(cc, &initial_page)))),
-    )
+        Box::new(move |cc| Ok(Box::new(ui::Launcher::new(cc, &initial_page, app_lifetime)))),
+    );
+    // The window is already gone. Retain the game worker and its output readers
+    // until the game exits, so closing MCRS also works inside a Flatpak sandbox.
+    lifetime.wait();
+    result
 }
 
 fn icon() -> eframe::egui::IconData {

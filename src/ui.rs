@@ -10,7 +10,7 @@ use mcrslauncher::{
     profiles::{ProfileCommand, ProfileEvent, ProfileWorker, SkinFile, SkinModel},
     progress::{TransferProgress, format_duration},
     updater::{self, LauncherRelease, UpdateOutcome},
-    worker::{Action, Event, Worker},
+    worker::{Action, Event, Worker, WorkerLifetime},
 };
 use std::{
     collections::{HashMap, VecDeque},
@@ -107,7 +107,11 @@ pub struct Launcher {
 }
 
 impl Launcher {
-    pub fn new(cc: &eframe::CreationContext<'_>, initial_page: &str) -> Self {
+    pub fn new(
+        cc: &eframe::CreationContext<'_>,
+        initial_page: &str,
+        lifetime: WorkerLifetime,
+    ) -> Self {
         configure(&cc.egui_ctx);
         let paths = Paths::discover().unwrap_or_else(|_| Paths {
             root: std::env::temp_dir().join("mcrslauncher"),
@@ -121,7 +125,7 @@ impl Launcher {
         };
         let pending_check = settings.auto_check && !settings.offline_mode;
         let mut app = Self {
-            worker: Worker::new(paths.clone(), cc.egui_ctx.clone()),
+            worker: Worker::new(paths.clone(), cc.egui_ctx.clone(), &lifetime),
             profiles: ProfileWorker::new(paths.clone(), cc.egui_ctx.clone()),
             heads: HashMap::new(),
             skin_editor: None,
@@ -1078,148 +1082,326 @@ impl Launcher {
     }
 
     fn updates(&mut self, ui: &mut egui::Ui) {
-        title(
-            ui,
-            "Updates",
-            "Keep your launcher and Horizon game up to date.",
-        );
-        ui.add_space(22.);
-        self.launcher_updates(ui);
-        ui.add_space(16.);
-        card().show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.horizontal_wrapped(|ui| {
-                ui.label(RichText::new("Release channel").size(16.).strong());
-                let before = self.settings.channel;
-                egui::ComboBox::from_id_salt("update_channel").selected_text(self.settings.channel.label()).show_ui(ui, |ui| {
-                    ui.selectable_value(&mut self.settings.channel, Channel::Nightly, "Nightly · newest builds");
-                    ui.selectable_value(&mut self.settings.channel, Channel::Stable, "Stable · published releases");
-                });
-                if before != self.settings.channel {
-                    self.catalog = None;
-                    self.save();
-                    self.pending_check = self.settings.auto_check;
-                }
-                if ui.add_enabled(!self.busy, egui::Button::new("Check now")).clicked() { self.start(Action::CheckUpdates); }
-            });
-            ui.add_space(10.);
-            ui.label(RichText::new("Nightly follows the newest published Horizon build. Minecraft assets match the version required by that build.").size(12.).color(MUTED));
-            ui.add_space(18.);
-            ui.separator();
-            ui.add_space(14.);
-            if let Some(message) = &self.update_unavailable {
-                ui.label(RichText::new(message).color(ACCENT));
-                ui.add_space(10.);
-            }
-            if let Some(catalog) = self.catalog.clone().filter(|_| self.catalog_channel == self.settings.channel) {
-                ui.horizontal(|ui| {
-                    dot(ui, if self.update_unavailable.is_some() || self.has_update() { ACCENT } else { GREEN });
-                    ui.label(RichText::new(if self.update_unavailable.is_some() { "Last known builds · update status unavailable" } else if self.has_update() { "Update available" } else { "You're up to date" }).size(16.).strong());
-                });
-                ui.add_space(10.);
-                ui.label(format!("Game: {}", catalog.game.name));
-                ui.label(RichText::new(format!("Build published: {}", catalog.game_asset.updated_at.replace('T', " ").trim_end_matches('Z'))).size(12.).color(MUTED));
-                ui.label(RichText::new(format!("Engine: {}", catalog.engine.tag_name)).size(12.).color(MUTED));
-                ui.add_space(14.);
-                if primary(ui, if self.has_update() { "Install latest build  >" } else { "Verify & install  >" }, !self.busy).clicked() { self.start(Action::InstallGame); }
+        title(ui, "Updates", "Manage your launcher and Horizon builds.");
+        ui.add_space(12.);
+        ui.horizontal_wrapped(|ui| {
+            let schedule = if self.settings.offline_mode {
+                "Offline mode · update checks are paused".to_string()
+            } else if self.settings.auto_check {
+                format!(
+                    "Automatic checks · {}",
+                    self.settings.update_check_interval.label()
+                )
             } else {
-                if let Some(version) = &self.snapshot.selected_version {
-                    ui.label(format!("Installed: {version}"));
-                }
-                ui.label(RichText::new("Check for the latest build to see what's new.").color(MUTED));
+                "Automatic checks · Off".to_string()
+            };
+            ui.label(RichText::new(schedule).size(12.).color(MUTED));
+            if ui.link("Preferences").clicked() {
+                self.page = Page::Settings;
             }
         });
-        if let Some(catalog) = self.catalog.clone() {
-            ui.add_space(24.);
-            ui.label(RichText::new("Release notes").size(19.).strong());
-            ui.add_space(10.);
+        ui.add_space(20.);
+        if ui.available_width() >= 800. {
+            ui.columns(2, |columns| {
+                self.launcher_updates(&mut columns[0], 284.);
+                self.horizon_updates(&mut columns[1], 284.);
+            });
+        } else {
+            self.launcher_updates(ui, 0.);
+            ui.add_space(16.);
+            self.horizon_updates(ui, 0.);
+        }
+        let game_notes = self
+            .catalog
+            .as_ref()
+            .filter(|_| self.catalog_channel == self.settings.channel)
+            .map(|catalog| catalog.game.body.clone())
+            .unwrap_or_default();
+        let launcher_notes = self
+            .launcher_release
+            .as_ref()
+            .map(|release| release.notes.clone())
+            .unwrap_or_default();
+        if !game_notes.trim().is_empty() || !launcher_notes.trim().is_empty() {
+            ui.add_space(16.);
             card().show(ui, |ui| {
                 ui.set_width(ui.available_width());
-                let notes = if catalog.game.body.is_empty() {
-                    "No release notes for this build."
-                } else {
-                    &catalog.game.body
-                };
-                ui.label(
-                    RichText::new(notes.chars().take(16000).collect::<String>())
-                        .size(12.)
-                        .color(MUTED),
-                );
-                ui.add_space(12.);
-                if ui.link("Read on GitHub >").clicked() {
-                    self.open(format!(
-                        "{}/releases/tag/{}",
-                        github::REPOSITORY,
-                        catalog.game.tag_name
-                    ));
+                if !game_notes.trim().is_empty() {
+                    ui.collapsing("Horizon release notes", |ui| {
+                        release_notes(ui, "horizon_release_notes", &game_notes);
+                        if let Some(catalog) = &self.catalog {
+                            let url = format!(
+                                "{}/releases/tag/{}",
+                                github::REPOSITORY,
+                                catalog.game.tag_name
+                            );
+                            if ui.link("Read on GitHub ↗").clicked() {
+                                self.open(url);
+                            }
+                        }
+                    });
+                }
+                if !launcher_notes.trim().is_empty() {
+                    ui.collapsing("Launcher release notes", |ui| {
+                        release_notes(ui, "launcher_release_notes", &launcher_notes);
+                    });
                 }
             });
         }
     }
 
-    fn launcher_updates(&mut self, ui: &mut egui::Ui) {
+    fn horizon_updates(&mut self, ui: &mut egui::Ui, minimum_height: f32) {
         card().show(ui, |ui| {
             ui.set_width(ui.available_width());
+            ui.set_min_height(minimum_height);
             ui.horizontal_wrapped(|ui| {
-                ui.label(RichText::new("MCRS Launcher").size(17.).strong());
-                badge(ui, concat!("v", env!("CARGO_PKG_VERSION")), MUTED);
+                ui.set_min_height(32.);
+                ui.label(RichText::new("Horizon").size(18.).strong());
+                let before = self.settings.channel;
+                egui::ComboBox::from_id_salt("update_channel")
+                    .width(100.)
+                    .selected_text(self.settings.channel.label())
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(
+                            &mut self.settings.channel,
+                            Channel::Nightly,
+                            "Nightly",
+                        );
+                        ui.selectable_value(&mut self.settings.channel, Channel::Stable, "Stable");
+                    });
+                if before != self.settings.channel {
+                    self.catalog = None;
+                    self.checked_at = None;
+                    self.update_unavailable = None;
+                    self.save();
+                    self.pending_check = self.settings.auto_check && !self.settings.offline_mode;
+                }
             });
             ui.add_space(8.);
-            if updater::is_flatpak() {
-                ui.label("Update through your system software updater, then close and reopen MCRS. GitHub releases appear there after publication to the signed Flatpak repository.");
-                ui.horizontal_wrapped(|ui| {
-                    if ui.add_enabled(!self.busy && !self.settings.offline_mode, egui::Button::new("Open software updater")).clicked() {
-                        self.open(format!("appstream://{}", updater::FLATPAK_ID));
+            let catalog = self
+                .catalog
+                .clone()
+                .filter(|_| self.catalog_channel == self.settings.channel);
+            let installed = self.snapshot.selected_version.is_some();
+            let (status, color) = if self.settings.offline_mode {
+                ("Offline mode", MUTED)
+            } else if self.update_unavailable.is_some() {
+                ("Check unavailable", ACCENT)
+            } else if catalog.is_none() {
+                ("Not checked yet", MUTED)
+            } else if !installed {
+                ("Ready to install", ACCENT)
+            } else if self.has_update() {
+                ("Update available", ACCENT)
+            } else {
+                ("Up to date", GREEN)
+            };
+            update_status(ui, status, color);
+            ui.add_space(10.);
+            update_detail(
+                ui,
+                "Installed build",
+                self.snapshot
+                    .selected_version
+                    .as_deref()
+                    .unwrap_or("Not installed"),
+            );
+            update_detail(
+                ui,
+                "Latest build",
+                catalog
+                    .as_ref()
+                    .map(|c| c.game.name.as_str())
+                    .unwrap_or("Not checked"),
+            );
+            if let Some(catalog) = &catalog {
+                update_detail(ui, "Latest engine", &catalog.engine.tag_name);
+                update_detail(
+                    ui,
+                    "Published",
+                    catalog
+                        .game_asset
+                        .updated_at
+                        .split('T')
+                        .next()
+                        .unwrap_or_default(),
+                );
+            }
+            ui.add_space(12.);
+            let enabled = !self.busy && !self.settings.offline_mode;
+            ui.horizontal_wrapped(|ui| {
+                if catalog.is_some() {
+                    let label = if !installed {
+                        "Install Horizon"
+                    } else if self.has_update() {
+                        "Install update"
+                    } else {
+                        "Verify installation"
+                    };
+                    if update_action(ui, label, enabled, self.has_update()).clicked() {
+                        self.start(Action::InstallGame);
                     }
-                    if ui.button("Copy Flatpak update command").clicked() {
-                        ui.ctx().copy_text(updater::FLATPAK_UPDATE_COMMAND.into());
-                        self.notice = "Update command copied. Run it in a terminal, then reopen MCRS.".into();
-                    }
-                });
-                ui.label(RichText::new(updater::FLATPAK_UPDATE_COMMAND).monospace().size(11.).color(MUTED));
-            } else if let Some(outcome) = self.launcher_update.clone() {
-                match outcome {
-                    UpdateOutcome::Installed(executable) => {
-                        ui.label(RichText::new("Update installed · restart to use it").color(GREEN));
-                        if ui.add_enabled(!self.busy, egui::Button::new("Restart launcher")).clicked() {
-                            match std::process::Command::new(executable).args(["--page", "updates"]).spawn() {
-                                Ok(_) => ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close),
-                                Err(error) => self.error = Some(format!("Could not restart MCRS. Close and reopen it: {error}")),
+                }
+                if ui
+                    .add_enabled(enabled, egui::Button::new("Check now"))
+                    .clicked()
+                {
+                    self.start(Action::CheckUpdates);
+                }
+            });
+            ui.add_space(6.);
+            if let Some(message) = &self.update_unavailable {
+                ui.label(RichText::new(message).size(11.).color(MUTED));
+            } else if let Some(elapsed) = self.checked_at.and_then(|at| at.elapsed().ok()) {
+                let checked = if elapsed.as_secs() < 60 {
+                    "Checked just now".into()
+                } else if elapsed.as_secs() < 3600 {
+                    format!("Checked {} min ago", elapsed.as_secs() / 60)
+                } else {
+                    format!("Checked {} h ago", elapsed.as_secs() / 3600)
+                };
+                ui.label(RichText::new(checked).size(11.).color(MUTED));
+            } else {
+                ui.label(
+                    RichText::new("Game builds and the Horizon engine update together.")
+                        .size(11.)
+                        .color(MUTED),
+                );
+            }
+        });
+    }
+
+    fn launcher_updates(&mut self, ui: &mut egui::Ui, minimum_height: f32) {
+        card().show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.set_min_height(minimum_height);
+            let flatpak = updater::is_flatpak();
+            ui.horizontal_wrapped(|ui| {
+                ui.set_min_height(32.);
+                ui.label(RichText::new("MCRS Launcher").size(18.).strong());
+                if flatpak {
+                    badge(ui, "Flatpak", GREEN);
+                }
+            });
+            ui.add_space(8.);
+            let newer = self.launcher_release.as_ref().is_some_and(|release| {
+                release
+                    .newer_than(env!("CARGO_PKG_VERSION"))
+                    .unwrap_or(false)
+            });
+            let (status, color) = match &self.launcher_update {
+                Some(UpdateOutcome::Installed(_)) => ("Restart to finish updating", GREEN),
+                Some(UpdateOutcome::Downloaded { .. }) => ("Update ready to install", GREEN),
+                None if self.settings.offline_mode => ("Offline mode", MUTED),
+                None if newer => ("Update available", ACCENT),
+                None if self.launcher_release.is_some() => ("Up to date", GREEN),
+                None => ("Not checked yet", MUTED),
+            };
+            update_status(ui, status, color);
+            ui.add_space(10.);
+            update_detail(ui, "Installed version", env!("CARGO_PKG_VERSION"));
+            update_detail(
+                ui,
+                "Latest version",
+                self.launcher_release
+                    .as_ref()
+                    .map(|release| release.tag.as_str())
+                    .unwrap_or("Not checked"),
+            );
+            ui.add_space(12.);
+            let enabled = !self.busy && !self.settings.offline_mode;
+            ui.horizontal_wrapped(|ui| {
+                if let Some(UpdateOutcome::Installed(executable)) = self.launcher_update.clone() {
+                    if update_action(ui, "Restart launcher", !self.busy, true).clicked() {
+                        match std::process::Command::new(executable)
+                            .args(["--page", "updates"])
+                            .spawn()
+                        {
+                            Ok(_) => ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close),
+                            Err(error) => {
+                                self.error = Some(format!(
+                                    "Could not restart MCRS. Close and reopen it: {error}"
+                                ))
                             }
                         }
                     }
-                    UpdateOutcome::Downloaded { binary, .. } => {
-                        ui.label("Verified update downloaded. Close MCRS, then replace its executable with this file.");
-                        ui.label(binary.display().to_string());
-                        if ui.button("Open update folder").clicked()
-                            && let Some(folder) = binary.parent() {
-                            self.open(folder);
-                        }
+                } else if let Some(UpdateOutcome::Downloaded { binary, .. }) =
+                    self.launcher_update.clone()
+                {
+                    if ui.button("Open update folder").clicked()
+                        && let Some(folder) = binary.parent()
+                    {
+                        self.open(folder);
                     }
-                }
-            }
-            if let Some(release) = self.launcher_release.clone() {
-                let newer = release.newer_than(env!("CARGO_PKG_VERSION")).unwrap_or(false);
-                ui.label(RichText::new(if newer { format!("Available: {}", release.tag) } else { format!("Latest release: {} · you're up to date", release.tag) }).color(if newer { ACCENT } else { GREEN }));
-                if newer && !updater::is_flatpak() && self.launcher_update.is_none() {
-                    if ui.add_enabled(!self.busy && !self.settings.offline_mode && release.asset.is_some(), egui::Button::new("Update MCRS Launcher")).clicked() {
-                        self.start(Action::InstallLauncherUpdate(Box::new(release.clone())));
+                } else if flatpak {
+                    if update_action(ui, "Open software updater", enabled, newer).clicked() {
+                        self.open(format!("appstream://{}", updater::FLATPAK_ID));
                     }
-                    if release.asset.is_none() { ui.label("No native update package is available for this platform. See Releases for downloads."); }
+                } else if newer
+                    && let Some(release) = self.launcher_release.clone()
+                    && update_action(
+                        ui,
+                        "Install update",
+                        enabled && release.asset.is_some(),
+                        true,
+                    )
+                    .clicked()
+                {
+                    self.start(Action::InstallLauncherUpdate(Box::new(release)));
                 }
-                if !release.notes.is_empty() {
-                    ui.collapsing("Launcher release notes", |ui| { ui.label(release.notes.chars().take(8000).collect::<String>()); });
-                }
-            } else {
-                ui.label(RichText::new("Launcher updates are checked only when you request them.").size(11.).color(MUTED));
-            }
-            ui.horizontal_wrapped(|ui| {
-                if ui.add_enabled(!self.busy && !self.settings.offline_mode, egui::Button::new("Check launcher update")).clicked() {
+                if ui
+                    .add_enabled(enabled, egui::Button::new("Check now"))
+                    .clicked()
+                {
                     self.start(Action::CheckLauncherUpdate);
                 }
-                if ui.add_enabled(!self.settings.offline_mode, egui::Button::new("Open launcher releases")).clicked() { self.open(updater::RELEASES_URL); }
             });
-            if self.settings.offline_mode { ui.label("Turn off Offline mode to check or download launcher updates."); }
+            ui.add_space(6.);
+            ui.label(
+                RichText::new(if flatpak {
+                    "Launcher updates are installed by your system."
+                } else if matches!(self.launcher_update, Some(UpdateOutcome::Downloaded { .. })) {
+                    "Close MCRS, then replace its executable with the verified download."
+                } else {
+                    "Checks the latest official MCRS release."
+                })
+                .size(11.)
+                .color(MUTED),
+            );
+            if ui
+                .add_enabled(
+                    !self.settings.offline_mode,
+                    egui::Link::new("View releases ↗"),
+                )
+                .clicked()
+            {
+                self.open(updater::RELEASES_URL);
+            }
+            if flatpak {
+                ui.collapsing("Update from a terminal", |ui| {
+                    ui.label(
+                        RichText::new(updater::FLATPAK_UPDATE_COMMAND)
+                            .monospace()
+                            .size(11.)
+                            .color(MUTED),
+                    );
+                    if ui.small_button("Copy command").clicked() {
+                        ui.ctx().copy_text(updater::FLATPAK_UPDATE_COMMAND.into());
+                        self.notice = "Update command copied".into();
+                    }
+                });
+            } else if newer
+                && self
+                    .launcher_release
+                    .as_ref()
+                    .is_some_and(|release| release.asset.is_none())
+            {
+                ui.label(
+                    RichText::new("Download a package for your platform from Releases.")
+                        .size(11.)
+                        .color(MUTED),
+                );
+            }
         });
     }
 
@@ -1736,6 +1918,116 @@ impl eframe::App for Launcher {
     }
 }
 
+fn update_detail(ui: &mut egui::Ui, label: &str, value: &str) {
+    ui.horizontal(|ui| {
+        ui.label(RichText::new(label).size(12.).color(MUTED));
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            ui.add(egui::Label::new(RichText::new(value).size(12.)).truncate())
+                .on_hover_text(value);
+        });
+    });
+}
+
+fn update_status(ui: &mut egui::Ui, text: &str, color: Color32) {
+    ui.horizontal(|ui| {
+        dot(ui, color);
+        ui.label(RichText::new(text).size(13.).color(color));
+    });
+}
+
+fn update_action(
+    ui: &mut egui::Ui,
+    text: &str,
+    enabled: bool,
+    highlighted: bool,
+) -> egui::Response {
+    let mut button = egui::Button::new(text);
+    if highlighted {
+        button = egui::Button::new(RichText::new(text).strong().color(BG)).fill(ACCENT);
+    }
+    ui.add_enabled(enabled, button)
+}
+
+fn release_notes(ui: &mut egui::Ui, id: &str, notes: &str) {
+    egui::ScrollArea::vertical()
+        .id_salt(id)
+        .max_height(240.)
+        .show(ui, |ui| {
+            ui.label(
+                RichText::new(release_notes_text(notes))
+                    .size(12.)
+                    .color(MUTED),
+            );
+        });
+}
+
+/// Release bodies may contain HTML. Show readable text in the compact preview;
+/// the GitHub link retains access to the full formatted release.
+fn release_notes_text(notes: &str) -> String {
+    if !notes.contains("</") && !notes.contains("<br") {
+        return notes.chars().take(16000).collect();
+    }
+    let mut output = String::new();
+    let mut tag = None::<String>;
+    for character in notes.chars().take(16000) {
+        if let Some(current) = &mut tag {
+            if character == '>' {
+                let name = current
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or_default()
+                    .to_ascii_lowercase();
+                if matches!(
+                    name.as_str(),
+                    "p" | "/p"
+                        | "h1"
+                        | "/h1"
+                        | "h2"
+                        | "/h2"
+                        | "h3"
+                        | "/h3"
+                        | "br"
+                        | "br/"
+                        | "/li"
+                        | "div"
+                        | "/div"
+                ) {
+                    output.push('\n');
+                } else if name == "li" {
+                    output.push_str("\n- ");
+                }
+                tag = None;
+            } else {
+                current.push(character);
+            }
+        } else if character == '<' {
+            tag = Some(String::new());
+        } else {
+            output.push(character);
+        }
+    }
+    if let Some(unfinished) = tag {
+        output.push('<');
+        output.push_str(&unfinished);
+    }
+    for (entity, value) in [
+        ("&nbsp;", " "),
+        ("&lt;", "<"),
+        ("&gt;", ">"),
+        ("&quot;", "\""),
+        ("&#39;", "'"),
+        ("&amp;", "&"),
+    ] {
+        output = output.replace(entity, value);
+    }
+    output
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
 fn configure(ctx: &egui::Context) {
     let mut visuals = egui::Visuals::dark();
     visuals.override_text_color = Some(TEXT);
@@ -1998,4 +2290,26 @@ fn landscape(ui: &mut egui::Ui) {
         FontId::proportional(12.),
         MUTED,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::release_notes_text;
+
+    #[test]
+    fn release_preview_displays_html_as_readable_text() {
+        assert_eq!(
+            release_notes_text(
+                "<h1>New build</h1><p>Faster &amp; smoother.</p><ul><li>Fix startup</li><li>Improve mods</li></ul>"
+            ),
+            "New build\n\nFaster & smoother.\n\n- Fix startup\n\n- Improve mods"
+        );
+    }
+
+    #[test]
+    fn release_preview_preserves_plain_text_and_limits_large_bodies() {
+        let plain = "Use Vec<T> when x < 5.\n\n## Improvements";
+        assert_eq!(release_notes_text(plain), plain);
+        assert_eq!(release_notes_text(&"a".repeat(20000)).len(), 16000);
+    }
 }

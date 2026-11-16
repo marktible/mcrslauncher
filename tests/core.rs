@@ -230,10 +230,17 @@ fn automatic_update_schedule_preserves_old_settings_and_respects_offline_mode() 
     let old_disabled: Settings = serde_json::from_str(r#"{"auto_check":false}"#).unwrap();
     assert!(old_disabled.automatic_update_interval().is_none());
     let mut settings: Settings = serde_json::from_str(r#"{"auto_check":true}"#).unwrap();
-    assert_eq!(settings.automatic_update_interval().unwrap().as_secs(), 900);
-    settings.update_check_interval = UpdateCheckInterval::StartupOnly;
+    assert_eq!(
+        settings.update_check_interval,
+        UpdateCheckInterval::StartupOnly
+    );
     assert!(settings.auto_check);
     assert!(settings.automatic_update_interval().is_none());
+    assert!(Settings::default().automatic_update_interval().is_none());
+    let explicit: Settings =
+        serde_json::from_str(r#"{"auto_check":true,"update_check_interval":"Every15Minutes"}"#)
+            .unwrap();
+    assert_eq!(explicit.automatic_update_interval().unwrap().as_secs(), 900);
 
     let temp = tempfile::tempdir().unwrap();
     let paths = Paths {
