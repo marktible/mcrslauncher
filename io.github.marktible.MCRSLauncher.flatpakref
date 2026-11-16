@@ -1,0 +1,10 @@
+[Flatpak Ref]
+Title=MCRS Launcher
+Name=io.github.marktible.MCRSLauncher
+Branch=stable
+Url=https://raw.githubusercontent.com/marktible/mcrslauncher/flatpak-repo/repo/
+SuggestRemoteName=mcrslauncher
+Homepage=https://github.com/marktible/mcrslauncher
+RuntimeRepo=https://dl.flathub.org/repo/flathub.flatpakrepo
+IsRuntime=false
+GPGKey=mDMEaus2mBYJKwYBBAHaRw8BAQdA312+zSVZoPlmUR/Z/ch7aTrcbxyZMjNrfadkCsUzp4u0Q01DUlMgTGF1bmNoZXIgRmxhdHBhayByZWxlYXNlcyA8bWFya3RpYmxlQHVzZXJzLm5vcmVwbHkuZ2l0aHViLmNvbT6IrAQTFgoAVBYhBC1JH1Xao0aKawjoGGsoUsQoOwOIBQJq6zaYGxSAAAAAAAQADm1hbnUyLDIuNSsxLjEyLDIsMgIbAwULCQgHAgYVCgkICwIEFgIDAQIeAQIXgAAKCRBrKFLEKDsDiCcSAQDNR6QryE0jk7JD9d1J4PuCzNkqHtAklpDZzseWKa2ttwD+ODtOgV8SdMkBd9AV//Ziky9FaodlkY8VLq/+n3xvNQw=
